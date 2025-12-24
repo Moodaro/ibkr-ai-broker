@@ -568,26 +568,37 @@ Mitigazioni:
 
 ## 19) Roadmap per sprint (dettagliata, con acceptance criteria)
 
-### Sprint 0 — Bootstrap (1–2 giorni)
+### Sprint 0 — Bootstrap (1–2 giorni) ✅ COMPLETATO (27/01/2025)
 
 **Goal**: repo pronto per sviluppo agentico.
 
-* [ ] crea struttura mono-repo
-* [ ] aggiungi AGENTS.md + copilot-instructions.md
-* [ ] devcontainer + docker-compose (db)
-* [ ] pre-commit + ruff + pytest
-* [ ] CI GitHub Actions (lint+test)
+* [x] crea struttura mono-repo
+* [x] aggiungi AGENTS.md + copilot-instructions.md
+* [x] devcontainer + docker-compose (db)
+* [x] pre-commit + ruff + pytest
+* [x] CI GitHub Actions (lint+test)
 
 **Done**: `pytest`, `ruff`, build CI green.
 
-### Sprint 1 — Audit foundation (2–4 giorni)
+**Risultati**: Repository Moodaro/ibkr-ai-broker creato con 23 file (2,364 linee). Test report: 7/7 categorie validate. Commit: a85d983, 22f41da.
 
-* [ ] definisci AuditEvent model
-* [ ] storage SQLite + API `append_event()`
-* [ ] middleware correlation id
-* [ ] test unit su audit
+### Sprint 1 — Audit foundation (2–4 giorni) ✅ COMPLETATO (27/01/2025)
+
+* [x] definisci AuditEvent model
+* [x] storage SQLite + API `append_event()`
+* [x] middleware correlation id
+* [x] test unit su audit
 
 **Done**: ogni endpoint emette almeno un audit event.
+
+**Risultati**: 
+- Modelli: AuditEvent (immutabile), EventType enum (20+ tipi), AuditEventCreate, AuditQuery, AuditStats
+- Storage: AuditStore SQLite con append_event(), get_event(), query_events(), get_stats()
+- Middleware: CorrelationIdMiddleware con ContextVar per tracking richieste
+- Test suite: 21 test (15 audit store + 5 middleware + 1 placeholder), tutti passati
+- Coverage: Completa per models, store, middleware
+- Commit: b5b877c
+- File: packages/audit_store/{models,store,middleware,__init__}.py + tests/test_{audit_store,middleware}.py
 
 ### Sprint 2 — IBKR read-only (Paper) (1–2 settimane)
 
@@ -737,9 +748,19 @@ Mitigazioni:
 ### Best Practices Trading Systems
 
 * [Safe AI Trading Patterns](https://github.com/topics/trading-bot)
-* [Risk Management in Automated Trading](https://www.investopedia.com/articles/active-trading/090415/risk-management-techniques-active-traders.asp)
+* [Risk Manageme1  
+**Ultima revisione**: 27 gennaio 2025  
+**Prossima revisione**: dopo Sprint 3 o quando necessario
 
-### MCP & LLM Integration
+## 25) Registro modifiche
+
+### v1.1 (27/01/2025)
+- ✅ Sprint 0 completato: Repository inizializzato con struttura completa
+- ✅ Sprint 1 completato: Audit foundation implementato con 21 test passati
+- 🚀 Pronto per Sprint 2: IBKR read-only adapter
+
+### v1.0 (24/12/2025)
+- Roadmap iniziale pubblicata
 
 * [Model Context Protocol Specification](https://modelcontextprotocol.io/)
 * [Structured Output Best Practices](https://platform.openai.com/docs/guides/structured-outputs)
