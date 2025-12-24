@@ -767,6 +767,16 @@ Mitigazioni:
 
 ---
 
-**Versione**: 1.0  
-**Ultima revisione**: 24 dicembre 2025  
+**Versione**: 1.1  
+**Ultima revisione**: 27 gennaio 2025  
 **Prossima revisione**: dopo Sprint 3 o quando necessario
+
+## 25) Registro modifiche
+
+### v1.1 (27/01/2025)
+- ✅ Sprint 0 completato: Repository inizializzato con struttura completa
+- ✅ Sprint 1 completato: Audit foundation implementato con 21 test passati
+- 🚀 Pronto per Sprint 2: IBKR read-only adapter
+
+### v1.0 (24/12/2025)
+- Roadmap iniziale pubblicata
