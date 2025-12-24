@@ -20,6 +20,11 @@ class EventType(str, Enum):
     PORTFOLIO_SNAPSHOT_TAKEN = "PortfolioSnapshotTaken"
     MARKET_SNAPSHOT_TAKEN = "MarketSnapshotTaken"
 
+    # Broker Connection
+    BROKER_CONNECTED = "BrokerConnected"
+    BROKER_DISCONNECTED = "BrokerDisconnected"
+    BROKER_RECONNECTING = "BrokerReconnecting"
+
     # Order Lifecycle
     ORDER_PROPOSED = "OrderProposed"
     ORDER_SIMULATED = "OrderSimulated"
