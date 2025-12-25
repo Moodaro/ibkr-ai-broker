@@ -63,6 +63,26 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 **Test totali progetto**: 416 test (395 passing, 21 nuovi performance monitor).
 
+### Epic B — Market Data v2 (Snapshot + Historical Bars) ✅ (25/12/2025)
+**Implementazione completata:**
+- MarketDataService con caching (TTL 60s per snapshot, 5min per bars)
+- 2 MCP tools: market_snapshot, market_bars con audit completo
+- 2 API endpoints: GET /market/snapshot, GET /market/bars
+- FakeBrokerAdapter con mock data realistici (bars OHLCV + snapshot)
+- 25 test passing (cache, staleness, error handling, API validation)
+- Commit: 6f51c1a
+
+### Epic C — Instrument Resolution (Search/Resolve) ✅ (25/12/2025)
+**Implementazione completata:**
+- InstrumentContract + SearchCandidate schemas (flat fields per JSON ergonomics)
+- InstrumentResolver con fuzzy matching (SequenceMatcher, threshold 0.95)
+- Multi-strategy resolution: conId → exact → fuzzy → ambiguous response
+- FakeBrokerAdapter mock DB: 25 instruments (9 STK, 7 ETF, 4 FX, 2 FUT, 2 CRYPTO)
+- 2 MCP tools: instrument_search, instrument_resolve con audit
+- 2 API endpoints: GET /instruments/search, POST /instruments/resolve
+- 47 test passing (18 unit + 29 integration)
+- Commit: a5991d1
+
 ---
 
 ## 2) Gap analysis rispetto agli MCP IBKR community
@@ -86,17 +106,54 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ### Epic A — IBKR Adapter "Real" (Gateway/Client Portal) + parity con FakeBroker
 
-**Goal**: portare i tool MCP e l'API ad usare **IBKR paper reale** mantenendo fallback Fake.
+**Goal**: Portare i tool MCP e l'API ad usare **IBKR paper reale** (ib_insync) mantenendo fallback Fake.
+
+**Status**: 🔄 IN PROGRESS (started 25/12/2025)
 
 **Deliverable**
 
-* `IBKRBrokerAdapter` (paper) per: portfolio, positions, cash, open orders, submit, status, cancel.
-* `ConnectionManager` + health checks.
+* `IBKRBrokerAdapter` (real) implementa BrokerAdapter Protocol
+* ConnectionManager con health checks, retry/backoff, circuit breaker
+* Implementazione metodi core: portfolio, positions, cash, market data, instrument search
+* Implementazione metodi order: submit, cancel, status tracking
+* Configurazione via environment variables (host, port, client_id, paper/live mode)
+* Integration tests con IBKR paper (richiede Gateway/TWS attivo)
+
+**Technical Stack**
+
+* Library: `ib_insync` (async, Pythonic wrapper su ibapi)
+* Connection: TWS Gateway port 7497 (paper) / 7496 (live)
+* Authentication: API-based (no 2FA per paper)
+* Reconnection: exponential backoff + circuit breaker
+* Error handling: classificazione errori IBKR (retriable/fatal)
+
+**Implementation Plan**
+
+1. Setup dependencies: add ib_insync to pyproject.toml
+2. Configuration module: IBKR connection settings from env
+3. ConnectionManager: connect/disconnect/reconnect/health_check
+4. IBKRBrokerAdapter skeleton: implement Protocol methods
+5. Core methods: get_portfolio, get_positions, get_account_cash
+6. Market data: get_market_snapshot, get_market_bars (real-time + historical)
+7. Instrument methods: search_instruments, resolve_instrument, get_contract_by_id
+8. Order methods: submit_order, cancel_order, get_order_status, list_open_orders
+9. Integration tests: connection, portfolio, market data, orders (paper only)
+10. Documentation: setup guide, configuration, troubleshooting
 
 **Acceptance criteria**
 
-* E2E paper: propose→simulate→risk→approve→submit→fill su almeno 3 strumenti (STK/ETF/FX o CRYPTO se supportato).
-* Retry/backoff + circuit breaker testati.
+* E2E paper: propose→simulate→risk→approve→submit→fill su almeno 3 strumenti (STK/ETF/FX).
+* Retry/backoff + circuit breaker testati con connection loss simulation.
+* 50+ integration tests passing with IBKR paper account.
+* Graceful fallback to FakeBroker when IBKR unavailable.
+* Health check endpoint returns connection status and latency metrics.
+
+**Risks & Mitigations**
+
+* Risk: IBKR API rate limits → Mitigation: request throttling + caching
+* Risk: Connection instability → Mitigation: automatic reconnection + circuit breaker
+* Risk: Market data subscription limits → Mitigation: request queue + backpressure
+* Risk: Order rejection (margin, rules) → Mitigation: pre-validation + clear error messages
 
 ---
 
