@@ -20,6 +20,7 @@ from packages.metrics_collector import get_metrics_collector
 from packages.feature_flags import get_feature_flags
 from packages.reconciliation import get_reconciler
 from packages.statistics import get_stats_collector, PreLiveStatus
+from packages.safety_checks import get_safety_checker
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -1358,3 +1359,42 @@ async def get_pre_live_checklist():
             detail=f"Failed to evaluate pre-live checklist: {e}"
         )
 
+
+@app.get("/api/v1/safety-checks/status")
+async def get_safety_checks():
+    """
+    Run pre-live safety validation checks.
+    
+    Validates infrastructure and system health:
+    - Test coverage (adequate test files)
+    - Audit backup system operational
+    - Alerting system configured
+    - Reconciliation system initialized
+    - Kill switch functional
+    - Feature flags working
+    - Statistics collection active
+    
+    Returns:
+        SafetyCheckResult with ready_for_live decision and all check results
+    """
+    try:
+        checker = get_safety_checker()
+        result = checker.run_all_checks()
+        
+        logger.info(
+            "safety_checks_completed",
+            ready_for_live=result.ready_for_live,
+            checks_passed=result.checks_passed,
+            checks_total=result.checks_total,
+            blocking_issues_count=len(result.blocking_issues),
+            warnings_count=len(result.warnings)
+        )
+        
+        return result.to_dict()
+        
+    except Exception as e:
+        logger.error("safety_checks_failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Safety checks failed: {e}"
+        )
