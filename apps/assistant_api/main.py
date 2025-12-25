@@ -17,6 +17,7 @@ from packages.structured_logging import get_logger, setup_logging
 
 from packages.approval_service import ApprovalService
 from packages.metrics_collector import get_metrics_collector
+from packages.feature_flags import get_feature_flags
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -1115,4 +1116,77 @@ async def deactivate_kill_switch(request: Request):
     
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# Feature Flags Endpoints
+
+
+@app.get("/api/v1/feature-flags")
+async def get_feature_flags_status():
+    """
+    Get current feature flags status.
+    
+    Returns:
+        Dictionary with all feature flag values.
+    """
+    flags = get_feature_flags()
+    return flags.to_dict()
+
+
+@app.post("/api/v1/feature-flags/{flag_name}/enable")
+async def enable_feature_flag(flag_name: str):
+    """
+    Enable a feature flag at runtime.
+    
+    Args:
+        flag_name: Name of flag to enable
+        
+    Returns:
+        Updated flag status.
+        
+    Raises:
+        HTTPException: If flag name is invalid.
+    """
+    flags = get_feature_flags()
+    
+    if not hasattr(flags, flag_name):
+        raise HTTPException(status_code=404, detail=f"Feature flag '{flag_name}' not found")
+    
+    flags.set_flag(flag_name, True)
+    
+    return {
+        "flag": flag_name,
+        "enabled": True,
+        "message": f"Feature flag '{flag_name}' enabled",
+    }
+
+
+@app.post("/api/v1/feature-flags/{flag_name}/disable")
+async def disable_feature_flag(flag_name: str):
+    """
+    Disable a feature flag at runtime.
+    
+    Args:
+        flag_name: Name of flag to disable
+        
+    Returns:
+        Updated flag status.
+        
+    Raises:
+        HTTPException: If flag name is invalid.
+    """
+    flags = get_feature_flags()
+    
+    if not hasattr(flags, flag_name):
+        raise HTTPException(status_code=404, detail=f"Feature flag '{flag_name}' not found")
+    
+    flags.set_flag(flag_name, False)
+    
+    return {
+        "flag": flag_name,
+        "enabled": False,
+        "message": f"Feature flag '{flag_name}' disabled",
+    }
+
+
 

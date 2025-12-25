@@ -1512,4 +1512,68 @@ class TestMetricsEndpoint:
         assert "ibkr_submission_latency_seconds_count" in text
 
 
+class TestFeatureFlagsEndpoint:
+    """Test /api/v1/feature-flags endpoints."""
+    
+    def test_get_feature_flags(self, client):
+        """Test GET /api/v1/feature-flags."""
+        response = client.get("/api/v1/feature-flags")
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Verify all flags present
+        assert "live_trading_mode" in data
+        assert "auto_approval" in data
+        assert "new_risk_rules" in data
+        assert "strict_validation" in data
+        assert "enable_dashboard" in data
+        assert "enable_mcp_server" in data
+        
+        # Verify default values
+        assert isinstance(data["live_trading_mode"], bool)
+        assert isinstance(data["auto_approval"], bool)
+    
+    def test_enable_feature_flag(self, client):
+        """Test POST /api/v1/feature-flags/{flag}/enable."""
+        response = client.post("/api/v1/feature-flags/auto_approval/enable")
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data["flag"] == "auto_approval"
+        assert data["enabled"] is True
+        assert "enabled" in data["message"].lower()
+        
+        # Verify flag is enabled
+        verify_response = client.get("/api/v1/feature-flags")
+        verify_data = verify_response.json()
+        assert verify_data["auto_approval"] is True
+    
+    def test_disable_feature_flag(self, client):
+        """Test POST /api/v1/feature-flags/{flag}/disable."""
+        # First enable it
+        client.post("/api/v1/feature-flags/auto_approval/enable")
+        
+        # Then disable
+        response = client.post("/api/v1/feature-flags/auto_approval/disable")
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data["flag"] == "auto_approval"
+        assert data["enabled"] is False
+        assert "disabled" in data["message"].lower()
+    
+    def test_enable_invalid_flag(self, client):
+        """Test enabling non-existent flag returns 404."""
+        response = client.post("/api/v1/feature-flags/invalid_flag/enable")
+        
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"].lower()
+
+
+
+
 
