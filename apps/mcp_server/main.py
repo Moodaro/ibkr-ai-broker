@@ -36,6 +36,7 @@ from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
+from packages.structured_logging import get_logger, setup_logging
 from packages.trade_sim import TradeSimulator, SimulationConfig
 from packages.approval_service import ApprovalService
 
@@ -47,6 +48,9 @@ simulator: Optional[TradeSimulator] = None
 risk_engine: Optional[RiskEngine] = None
 approval_service: Optional[ApprovalService] = None
 kill_switch: Optional[KillSwitch] = None
+
+# Initialize logger
+logger = get_logger(__name__)
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -616,8 +620,12 @@ async def main():
     """Main entry point for MCP server."""
     global audit_store, broker, simulator, risk_engine, approval_service, kill_switch
     
-    # Initialize services
-    print("Initializing MCP server...")
+    # Setup logging
+    import os
+    log_level = os.getenv("LOG_LEVEL", "INFO")
+    setup_logging(level=log_level, json_output=True)
+    
+    logger.info("mcp_server_initializing")
     
     # Initialize kill switch first
     kill_switch = get_kill_switch()
@@ -638,7 +646,7 @@ async def main():
     
     approval_service = ApprovalService(max_proposals=1000)
     
-    print("Services initialized.")
+    logger.info("mcp_server_services_initialized")
     
     # Create MCP server
     server = Server("ibkr-ai-broker-mcp")
@@ -778,7 +786,7 @@ async def main():
             raise ValueError(f"Unknown tool: {name}")
     
     # Run server
-    print("Starting MCP server on stdio...")
+    logger.info("mcp_server_starting", transport="stdio")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

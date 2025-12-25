@@ -13,11 +13,21 @@ When activated:
 - State persisted to prevent accidental reactivation
 """
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Optional
+
+try:
+    from packages.structured_logging import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    # Fallback if structured_logging not available
+    import logging
+    logger = logging.getLogger(__name__)
+
 
 from pydantic import BaseModel, Field
 
@@ -91,7 +101,7 @@ class KillSwitch:
                 json.dump(data, f, indent=2)
         except Exception as e:
             # Log error but don't fail - kill switch state is in memory
-            print(f"Warning: Failed to save kill switch state: {e}")
+            logger.warning("failed_to_save_kill_switch_state", error=str(e))
     
     def _check_env_override(self) -> None:
         """Check for environment variable override."""

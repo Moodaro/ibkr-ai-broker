@@ -12,6 +12,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from packages.structured_logging import get_logger, setup_logging
+
 from packages.approval_service import ApprovalService
 from packages.audit_store import (
     AuditEventCreate,
@@ -79,11 +81,22 @@ order_submitter: OrderSubmitter | None = None
 # Global kill switch instance
 kill_switch: KillSwitch | None = None
 
+# Initialize logger
+logger = get_logger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan management."""
     global audit_store, simulator, risk_engine, approval_service, broker, order_submitter, kill_switch
+    
+    # Setup logging
+    import os
+    log_level = os.getenv("LOG_LEVEL", "INFO")
+    log_file = os.getenv("LOG_FILE", "logs/assistant_api.log")
+    setup_logging(level=log_level, log_file=log_file, json_output=True)
+    
+    logger.info("assistant_api_starting")
     
     # Initialize kill switch first (highest priority)
     kill_switch = get_kill_switch()
@@ -104,7 +117,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             daily_pnl=Decimal("0"),
         )
     except Exception as e:
-        print(f"Warning: Failed to load risk policy: {e}")
+        logger.warning("failed_to_load_risk_policy", error=str(e))
         # Use default configuration
         risk_engine = RiskEngine(
             limits=RiskLimits(),
