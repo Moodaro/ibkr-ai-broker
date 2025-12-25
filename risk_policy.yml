@@ -1,0 +1,87 @@
+# Risk Policy Configuration for IBKR AI Broker
+# This file defines risk limits and trading rules (R1-R8)
+
+# Version and metadata
+version: "1.0"
+last_updated: "2025-12-25"
+description: "Conservative risk policy for paper trading phase"
+
+# Risk Limits
+limits:
+  # R1: Maximum notional value per order
+  # Limits single order size to prevent excessive capital deployment
+  max_notional: 50000.00  # USD
+
+  # R2: Maximum position size as percentage of portfolio
+  # Prevents over-concentration in single position
+  max_position_pct: 10.0  # %
+
+  # R3: Maximum sector exposure
+  # Limits exposure to single sector for diversification
+  max_sector_exposure_pct: 30.0  # %
+
+  # R4: Maximum slippage tolerance
+  # Rejects orders with excessive expected slippage
+  max_slippage_bps: 50  # basis points (0.5%)
+
+  # R6: Minimum liquidity requirement
+  # Ensures adequate daily volume for execution
+  min_daily_volume: 100000  # shares
+
+  # R7: Maximum trades per day
+  # Prevents overtrading and excessive transaction costs
+  max_daily_trades: 50
+
+  # R8: Maximum daily loss
+  # Circuit breaker to limit daily drawdown
+  max_daily_loss: 5000.00  # USD
+
+# Trading Hours (R5)
+trading_hours:
+  # Allow trading during pre-market (04:00-09:30 ET / 09:00-14:30 UTC)
+  allow_pre_market: false
+
+  # Allow trading during after-hours (16:00-20:00 ET / 21:00-01:00 UTC)
+  allow_after_hours: false
+
+  # Regular market hours (09:30-16:00 ET / 14:30-21:00 UTC)
+  market_open_utc: "14:30"  # HH:MM format
+  market_close_utc: "21:00"
+
+# Kill Switch Configuration
+kill_switch:
+  # Global kill switch - when enabled, all trades rejected
+  enabled: false
+
+  # Reason for kill switch activation (when enabled)
+  reason: ""
+
+# Warnings Configuration
+warnings:
+  # Generate warning when notional is above this % of max
+  notional_warning_threshold_pct: 80.0
+
+  # Generate warning when position size is above this % of max
+  position_warning_threshold_pct: 80.0
+
+  # Generate warning when daily trades approach limit
+  daily_trades_warning_threshold: 40
+
+# Emergency Contacts (for manual review escalation)
+emergency_contacts:
+  - name: "Risk Manager"
+    email: "risk@example.com"
+  - name: "Portfolio Manager"
+    email: "pm@example.com"
+
+# Rule Enablement (for gradual rollout or testing)
+# Set to false to disable specific rules temporarily
+rules_enabled:
+  R1_max_notional: true
+  R2_max_position: true
+  R3_max_sector: true  # Note: requires sector mapping data
+  R4_max_slippage: true
+  R5_trading_hours: true
+  R6_min_liquidity: false  # Disabled in MVP (requires market data)
+  R7_max_daily_trades: true
+  R8_max_daily_loss: true

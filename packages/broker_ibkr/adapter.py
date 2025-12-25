@@ -3,7 +3,11 @@
 This module defines the interface that all broker adapters must implement.
 """
 
-from typing import Protocol
+from typing import Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from packages.schemas.approval import ApprovalToken
+    from packages.schemas.order_intent import OrderIntent
 
 from .models import (
     Account,
@@ -88,5 +92,39 @@ class BrokerAdapter(Protocol):
 
         Returns:
             True if connected, False otherwise.
+        """
+        ...
+
+    def submit_order(
+        self,
+        order_intent: "OrderIntent",
+        approval_token: "ApprovalToken",
+    ) -> OpenOrder:
+        """Submit order to broker.
+
+        Args:
+            order_intent: Order intent to submit.
+            approval_token: Valid approval token (must be validated before call).
+
+        Returns:
+            OpenOrder with broker order ID and initial status.
+
+        Raises:
+            ValueError: If order is invalid.
+            ConnectionError: If broker connection fails.
+        """
+        ...
+
+    def get_order_status(self, broker_order_id: str) -> OpenOrder:
+        """Get current order status from broker.
+
+        Args:
+            broker_order_id: Broker's order identifier.
+
+        Returns:
+            OpenOrder with current status.
+
+        Raises:
+            ValueError: If order ID is invalid.
         """
         ...

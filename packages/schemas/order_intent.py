@@ -1,4 +1,4 @@
-"""Order intent schema for IBKR AI Broker.
+﻿"""Order intent schema for IBKR AI Broker.
 
 This module defines the structured format for order proposals.
 All orders must conform to this schema before being processed.
@@ -211,3 +211,36 @@ class SimulationResponse(BaseModel):
         description="Simulation result with execution estimates",
     )
     correlation_id: str
+
+
+class RiskEvaluationRequest(BaseModel):
+    """Request model for risk evaluation."""
+
+    intent: OrderIntent = Field(
+        ...,
+        description="Validated order intent to evaluate",
+    )
+    simulation: dict = Field(
+        ...,
+        description="Simulation result from /simulate endpoint",
+    )
+    portfolio_value: Decimal = Field(
+        ...,
+        description="Current portfolio total value",
+        gt=Decimal("0"),
+    )
+
+    model_config = {"frozen": True}
+
+
+class RiskEvaluationResponse(BaseModel):
+    """Response model for risk evaluation."""
+
+    decision: dict = Field(
+        ...,
+        description="Risk decision with approval status and details",
+    )
+    correlation_id: str
+
+    model_config = {"frozen": True}
+
