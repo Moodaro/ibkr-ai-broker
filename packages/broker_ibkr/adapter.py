@@ -3,12 +3,18 @@
 This module defines the interface that all broker adapters must implement.
 """
 
-from typing import Protocol, TYPE_CHECKING
+from datetime import datetime
+from typing import Optional, Protocol, TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from packages.schemas.approval import ApprovalToken
     from packages.schemas.order_intent import OrderIntent
 
+from packages.schemas.market_data import (
+    MarketSnapshot as MarketSnapshotV2,
+    MarketBar,
+    TimeframeType,
+)
 from .models import (
     Account,
     Instrument,
@@ -126,5 +132,51 @@ class BrokerAdapter(Protocol):
 
         Raises:
             ValueError: If order ID is invalid.
+        """
+        ...
+    
+    def get_market_snapshot_v2(
+        self,
+        instrument: str,
+        fields: Optional[List[str]] = None
+    ) -> MarketSnapshotV2:
+        """Get current market snapshot for an instrument (v2 schema).
+        
+        Args:
+            instrument: Instrument identifier (symbol)
+            fields: Optional list of specific fields to retrieve
+        
+        Returns:
+            MarketSnapshotV2 with current market data
+        
+        Raises:
+            ValueError: If instrument is invalid or not found
+        """
+        ...
+    
+    def get_market_bars(
+        self,
+        instrument: str,
+        timeframe: TimeframeType,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 100,
+        rth_only: bool = True
+    ) -> List[MarketBar]:
+        """Get historical OHLCV bars for an instrument.
+        
+        Args:
+            instrument: Instrument identifier (symbol)
+            timeframe: Bar timeframe (e.g., "1m", "1h", "1d")
+            start: Start time (UTC), default: 24 hours ago
+            end: End time (UTC), default: now
+            limit: Maximum number of bars to return (1-5000)
+            rth_only: Regular trading hours only
+        
+        Returns:
+            List of MarketBar sorted by timestamp (oldest first)
+        
+        Raises:
+            ValueError: If parameters are invalid
         """
         ...

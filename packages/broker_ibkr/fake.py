@@ -4,15 +4,22 @@ This module provides a mock broker adapter with realistic data
 for testing purposes without connecting to real IBKR.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, List
 import uuid
+import random
+import math
 
 if TYPE_CHECKING:
     from packages.schemas.approval import ApprovalToken
     from packages.schemas.order_intent import OrderIntent
 
+from packages.schemas.market_data import (
+    MarketSnapshot as MarketSnapshotV2,
+    MarketBar,
+    TimeframeType,
+)
 from .adapter import BrokerAdapter
 from .models import (
     Account,
@@ -310,3 +317,141 @@ class FakeBrokerAdapter:
             "TSLA": Decimal("250.00"),
         }
         return mock_prices.get(symbol, Decimal("100.00"))
+    
+    def get_market_snapshot_v2(
+        self,
+        instrument: str,
+        fields: Optional[List[str]] = None
+    ) -> MarketSnapshotV2:
+        """Get market snapshot with v2 schema.
+        
+        Args:
+            instrument: Instrument symbol
+            fields: Optional list of specific fields
+        
+        Returns:
+            MarketSnapshotV2 with realistic mock data
+        """
+        base_price = self._get_mock_price(instrument)
+        spread = base_price * Decimal("0.001")  # 0.1% spread
+        
+        # Add realistic variability
+        noise = Decimal(str(random.uniform(-0.005, 0.005)))  # ±0.5%
+        current_price = base_price * (Decimal("1") + noise)
+        
+        bid = current_price - spread / Decimal("2")
+        ask = current_price + spread / Decimal("2")
+        
+        return MarketSnapshotV2(
+            instrument=instrument,
+            timestamp=datetime.utcnow(),
+            bid=bid,
+            ask=ask,
+            last=current_price,
+            volume=random.randint(100000, 5000000),
+            bid_size=random.randint(100, 1000),
+            ask_size=random.randint(100, 1000),
+            high=current_price * Decimal("1.015"),
+            low=current_price * Decimal("0.985"),
+            open_price=base_price,
+            prev_close=base_price * Decimal("0.998"),
+        )
+    
+    def get_market_bars(
+        self,
+        instrument: str,
+        timeframe: TimeframeType,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 100,
+        rth_only: bool = True
+    ) -> List[MarketBar]:
+        """Get historical bars with realistic OHLCV data.
+        
+        Args:
+            instrument: Instrument symbol
+            timeframe: Bar timeframe
+            start: Start time (default: 24h ago)
+            end: End time (default: now)
+            limit: Max bars to return
+            rth_only: Regular trading hours only
+        
+        Returns:
+            List of MarketBar with simulated price movement
+        """
+        # Parse timeframe
+        timeframe_minutes = self._parse_timeframe(timeframe)
+        
+        # Default time range
+        if end is None:
+            end = datetime.utcnow()
+        if start is None:
+            start = end - timedelta(hours=24)
+        
+        # Ensure we don't generate more bars than the time range allows
+        max_possible_bars = int((end - start).total_seconds() / 60 / timeframe_minutes)
+        actual_limit = min(limit, max_possible_bars, 1000)  # Cap at 1000 for safety
+        
+        # Generate bars
+        bars = []
+        base_price = self._get_mock_price(instrument)
+        current_price = base_price
+        current_time = start
+        
+        while current_time < end and len(bars) < actual_limit:
+            # Simulate price movement with trend + noise
+            trend = random.uniform(-0.002, 0.002)  # ±0.2% trend
+            volatility = float(base_price) * 0.01  # 1% volatility
+            
+            # Generate OHLC
+            open_price = current_price
+            high = open_price + Decimal(str(abs(random.gauss(0, volatility))))
+            low = open_price - Decimal(str(abs(random.gauss(0, volatility))))
+            close = open_price * (Decimal("1") + Decimal(str(trend)))
+            
+            # Ensure OHLC relationships
+            high = max(high, open_price, close)
+            low = min(low, open_price, close)
+            
+            volume = random.randint(10000, 500000)
+            
+            bars.append(MarketBar(
+                instrument=instrument,
+                timestamp=current_time,
+                timeframe=timeframe,
+                open=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume,
+                vwap=(open_price + high + low + close) / Decimal("4"),
+                trade_count=random.randint(100, 5000),
+            ))
+            
+            # Move to next bar
+            current_price = close
+            current_time += timedelta(minutes=timeframe_minutes)
+        
+        return bars
+    
+    def _parse_timeframe(self, timeframe: TimeframeType) -> int:
+        """Parse timeframe string to minutes.
+        
+        Args:
+            timeframe: Timeframe string (e.g., "1m", "1h", "1d")
+        
+        Returns:
+            Number of minutes in timeframe
+        """
+        mapping = {
+            "1m": 1,
+            "5m": 5,
+            "15m": 15,
+            "30m": 30,
+            "1h": 60,
+            "4h": 240,
+            "1d": 1440,
+            "1w": 10080,
+            "1M": 43200,  # Approximate
+        }
+        return mapping.get(timeframe, 60)  # Default to 1h

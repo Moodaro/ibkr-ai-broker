@@ -1808,3 +1808,138 @@ async def check_performance_degradation(operation_name: str, window_minutes: int
                     operation=operation_name,
                     error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to check degradation: {e}")
+
+
+# ===== Market Data Endpoints =====
+
+@app.get("/api/v1/market/snapshot")
+async def get_market_snapshot(instrument: str, fields: Optional[str] = None):
+    """Get current market snapshot for an instrument."""
+    try:
+        if broker is None:
+            raise HTTPException(status_code=500, detail="Broker not initialized")
+        
+        # Parse fields if provided
+        fields_list = fields.split(",") if fields else None
+        
+        snapshot = broker.get_market_snapshot_v2(instrument, fields_list)
+        
+        logger.info("market_snapshot_retrieved",
+                   instrument=instrument,
+                   bid=str(snapshot.bid),
+                   ask=str(snapshot.ask))
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.CUSTOM,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "get_market_snapshot",
+                    "instrument": instrument,
+                    "fields": fields_list,
+                },
+                metadata={"event_subtype": "market_data_requested"}
+            ))
+        
+        return {
+            "instrument": snapshot.instrument,
+            "timestamp": snapshot.timestamp.isoformat(),
+            "bid": str(snapshot.bid) if snapshot.bid else None,
+            "ask": str(snapshot.ask) if snapshot.ask else None,
+            "last": str(snapshot.last) if snapshot.last else None,
+            "mid": str(snapshot.mid) if snapshot.mid else None,
+            "volume": snapshot.volume,
+            "bid_size": snapshot.bid_size,
+            "ask_size": snapshot.ask_size,
+            "high": str(snapshot.high) if snapshot.high else None,
+            "low": str(snapshot.low) if snapshot.low else None,
+            "open": str(snapshot.open_price) if snapshot.open_price else None,
+            "prev_close": str(snapshot.prev_close) if snapshot.prev_close else None,
+        }
+    except Exception as e:
+        logger.error("market_snapshot_failed",
+                    instrument=instrument,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get market snapshot: {e}")
+
+
+@app.get("/api/v1/market/bars")
+async def get_market_bars(
+    instrument: str,
+    timeframe: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 100,
+    rth_only: bool = True
+):
+    """Get historical OHLCV bars for an instrument."""
+    try:
+        if broker is None:
+            raise HTTPException(status_code=500, detail="Broker not initialized")
+        
+        # Parse optional datetime strings
+        from datetime import datetime
+        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')) if start else None
+        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')) if end else None
+        
+        # Validate limit
+        if limit < 1 or limit > 5000:
+            raise HTTPException(status_code=400, detail="Limit must be between 1 and 5000")
+        
+        bars = broker.get_market_bars(
+            instrument=instrument,
+            timeframe=timeframe,
+            start=start_dt,
+            end=end_dt,
+            limit=limit,
+            rth_only=rth_only
+        )
+        
+        logger.info("market_bars_retrieved",
+                   instrument=instrument,
+                   timeframe=timeframe,
+                   bar_count=len(bars))
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.CUSTOM,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "get_market_bars",
+                    "instrument": instrument,
+                    "timeframe": timeframe,
+                    "bar_count": len(bars),
+                },
+                metadata={"event_subtype": "market_data_requested"}
+            ))
+        
+        return {
+            "instrument": instrument,
+            "timeframe": timeframe,
+            "bar_count": len(bars),
+            "bars": [
+                {
+                    "timestamp": bar.timestamp.isoformat(),
+                    "open": str(bar.open),
+                    "high": str(bar.high),
+                    "low": str(bar.low),
+                    "close": str(bar.close),
+                    "volume": bar.volume,
+                    "vwap": str(bar.vwap) if bar.vwap else None,
+                    "trade_count": bar.trade_count,
+                }
+                for bar in bars
+            ],
+        }
+    except ValueError as e:
+        logger.error("market_bars_invalid_params",
+                    instrument=instrument,
+                    error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("market_bars_failed",
+                    instrument=instrument,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get market bars: {e}")

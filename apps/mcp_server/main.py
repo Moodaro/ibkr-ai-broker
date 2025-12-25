@@ -36,6 +36,7 @@ from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
+from packages.schemas.market_data import MarketSnapshotV2, MarketBar, TimeframeType
 from packages.structured_logging import get_logger, setup_logging
 from packages.trade_sim import TradeSimulator, SimulationConfig
 from packages.approval_service import ApprovalService
@@ -616,6 +617,145 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+async def handle_get_market_snapshot(arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    Get current market snapshot for an instrument.
+    
+    Args:
+        instrument: Instrument symbol
+        fields: Optional list of specific fields to retrieve
+    
+    Returns:
+        MarketSnapshot with current prices and volume
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        instrument = arguments.get("instrument")
+        if not instrument:
+            raise ValueError("instrument is required")
+        
+        fields = arguments.get("fields")
+        
+        emit_audit_event("get_market_snapshot", correlation_id, {
+            "instrument": instrument,
+            "fields": fields,
+        })
+        
+        if broker is None:
+            raise RuntimeError("Broker not initialized")
+        
+        snapshot = broker.get_market_snapshot_v2(instrument, fields)
+        
+        result = {
+            "instrument": snapshot.instrument,
+            "timestamp": snapshot.timestamp.isoformat(),
+            "bid": str(snapshot.bid) if snapshot.bid else None,
+            "ask": str(snapshot.ask) if snapshot.ask else None,
+            "last": str(snapshot.last) if snapshot.last else None,
+            "mid": str(snapshot.mid) if snapshot.mid else None,
+            "volume": snapshot.volume,
+            "bid_size": snapshot.bid_size,
+            "ask_size": snapshot.ask_size,
+            "high": str(snapshot.high) if snapshot.high else None,
+            "low": str(snapshot.low) if snapshot.low else None,
+            "open": str(snapshot.open_price) if snapshot.open_price else None,
+            "prev_close": str(snapshot.prev_close) if snapshot.prev_close else None,
+        }
+        
+        emit_audit_event("get_market_snapshot", correlation_id, {"instrument": instrument}, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+    
+    except Exception as e:
+        emit_audit_event("get_market_snapshot", correlation_id, arguments, error=str(e))
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+async def handle_get_market_bars(arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    Get historical OHLCV bars for an instrument.
+    
+    Args:
+        instrument: Instrument symbol
+        timeframe: Bar timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1M)
+        start: Optional start time (ISO 8601)
+        end: Optional end time (ISO 8601)
+        limit: Maximum bars to return (default: 100, max: 5000)
+        rth_only: Regular trading hours only (default: true)
+    
+    Returns:
+        List of MarketBar with OHLCV data
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        instrument = arguments.get("instrument")
+        timeframe = arguments.get("timeframe")
+        
+        if not instrument:
+            raise ValueError("instrument is required")
+        if not timeframe:
+            raise ValueError("timeframe is required")
+        
+        # Parse optional datetime arguments
+        start_str = arguments.get("start")
+        end_str = arguments.get("end")
+        start = datetime.fromisoformat(start_str.replace('Z', '+00:00')) if start_str else None
+        end = datetime.fromisoformat(end_str.replace('Z', '+00:00')) if end_str else None
+        
+        limit = arguments.get("limit", 100)
+        rth_only = arguments.get("rth_only", True)
+        
+        emit_audit_event("get_market_bars", correlation_id, {
+            "instrument": instrument,
+            "timeframe": timeframe,
+            "start": start_str,
+            "end": end_str,
+            "limit": limit,
+            "rth_only": rth_only,
+        })
+        
+        if broker is None:
+            raise RuntimeError("Broker not initialized")
+        
+        bars = broker.get_market_bars(
+            instrument=instrument,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            limit=limit,
+            rth_only=rth_only,
+        )
+        
+        result = {
+            "instrument": instrument,
+            "timeframe": timeframe,
+            "bar_count": len(bars),
+            "bars": [
+                {
+                    "timestamp": bar.timestamp.isoformat(),
+                    "open": str(bar.open),
+                    "high": str(bar.high),
+                    "low": str(bar.low),
+                    "close": str(bar.close),
+                    "volume": bar.volume,
+                    "vwap": str(bar.vwap) if bar.vwap else None,
+                    "trade_count": bar.trade_count,
+                }
+                for bar in bars
+            ],
+        }
+        
+        emit_audit_event("get_market_bars", correlation_id, {"instrument": instrument, "count": len(bars)}, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+    
+    except Exception as e:
+        emit_audit_event("get_market_bars", correlation_id, arguments, error=str(e))
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
 async def main():
     """Main entry point for MCP server."""
     global audit_store, broker, simulator, risk_engine, approval_service, kill_switch
@@ -763,6 +903,62 @@ async def main():
                     "required": ["account_id", "symbol", "side", "quantity", "market_price", "reason"],
                 },
             ),
+            Tool(
+                name="get_market_snapshot",
+                description="Get current market snapshot with bid/ask/last prices and volume",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "instrument": {
+                            "type": "string",
+                            "description": "Instrument symbol (e.g., AAPL, SPY)",
+                        },
+                        "fields": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional specific fields to retrieve (bid, ask, last, volume, etc.)",
+                        },
+                    },
+                    "required": ["instrument"],
+                },
+            ),
+            Tool(
+                name="get_market_bars",
+                description="Get historical OHLCV bars for technical analysis",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "instrument": {
+                            "type": "string",
+                            "description": "Instrument symbol",
+                        },
+                        "timeframe": {
+                            "type": "string",
+                            "enum": ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"],
+                            "description": "Bar timeframe",
+                        },
+                        "start": {
+                            "type": "string",
+                            "description": "Start time in ISO 8601 format (optional, default: 24h ago)",
+                        },
+                        "end": {
+                            "type": "string",
+                            "description": "End time in ISO 8601 format (optional, default: now)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum bars to return (default: 100, max: 5000)",
+                            "minimum": 1,
+                            "maximum": 5000,
+                        },
+                        "rth_only": {
+                            "type": "boolean",
+                            "description": "Regular trading hours only (default: true)",
+                        },
+                    },
+                    "required": ["instrument", "timeframe"],
+                },
+            ),
         ]
     
     # Handle tool calls
@@ -782,6 +978,10 @@ async def main():
             return await handle_evaluate_risk(arguments)
         elif name == "request_approval":
             return await handle_request_approval(arguments)
+        elif name == "get_market_snapshot":
+            return await handle_get_market_snapshot(arguments)
+        elif name == "get_market_bars":
+            return await handle_get_market_bars(arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
     
