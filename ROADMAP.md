@@ -1090,7 +1090,7 @@ Sprint 9 completes the **gated AI pattern**, enabling LLMs to:
 * introdurre gradualità (nuovi strumenti, nuove regole)
 * nessuna strategia "creativa" finché non hai metriche robuste
 
----
+---s
 
 ## 21) Prompt pack per Copilot (uso pratico)
 

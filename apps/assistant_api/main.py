@@ -19,6 +19,7 @@ from packages.approval_service import ApprovalService
 from packages.metrics_collector import get_metrics_collector
 from packages.feature_flags import get_feature_flags
 from packages.reconciliation import get_reconciler
+from packages.statistics import get_stats_collector, PreLiveStatus
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -139,6 +140,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     
     # Initialize reconciler
     get_reconciler(broker_adapter=broker)
+    
+    # Initialize statistics collector with persistent storage
+    from pathlib import Path
+    stats_storage = Path("data/statistics.json")
+    get_stats_collector(storage_path=stats_storage)
     
     # Initialize order submitter
     order_submitter = OrderSubmitter(
@@ -1278,3 +1284,77 @@ async def get_reconciliation_status(account_id: str = "DU123456"):
             status_code=500,
             detail=f"Reconciliation failed: {e}"
         )
+
+
+@app.get("/api/v1/statistics/summary")
+async def get_statistics_summary():
+    """
+    Get paper trading statistics summary.
+    
+    Returns comprehensive statistics including:
+    - Order success rate
+    - Rejection breakdown
+    - Average latency
+    - Simulator accuracy
+    - Reconciliation success rate
+    
+    Returns:
+        Dictionary with all tracked metrics
+    """
+    try:
+        stats = get_stats_collector()
+        summary = stats.get_summary()
+        
+        logger.info(
+            "statistics_summary_retrieved",
+            total_orders=summary.get("total_orders", 0),
+            success_rate=summary.get("success_rate", 0.0),
+            reject_rate=summary.get("reject_rate", 0.0)
+        )
+        
+        return summary
+        
+    except Exception as e:
+        logger.error("statistics_summary_failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve statistics: {e}"
+        )
+
+
+@app.get("/api/v1/statistics/pre-live-checklist")
+async def get_pre_live_checklist():
+    """
+    Get pre-live trading readiness checklist.
+    
+    Validates system readiness for live trading based on:
+    - 200+ orders simulated
+    - 50+ orders submitted successfully
+    - 0 unintended orders (critical)
+    - Reject rate <20%
+    - 30 days of 100% reconciliation
+    
+    Returns:
+        PreLiveStatus with validation results
+    """
+    try:
+        stats = get_stats_collector()
+        status = stats.get_pre_live_status()
+        
+        logger.info(
+            "pre_live_checklist_evaluated",
+            ready_for_live=status.ready_for_live,
+            checks_passed=status.checks_passed,
+            checks_total=status.checks_total,
+            blocking_issues_count=len(status.blocking_issues)
+        )
+        
+        return status.to_dict()
+        
+    except Exception as e:
+        logger.error("pre_live_checklist_failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to evaluate pre-live checklist: {e}"
+        )
+
