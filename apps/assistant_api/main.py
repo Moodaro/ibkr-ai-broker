@@ -18,6 +18,7 @@ from packages.structured_logging import get_logger, setup_logging
 from packages.approval_service import ApprovalService
 from packages.metrics_collector import get_metrics_collector
 from packages.feature_flags import get_feature_flags
+from packages.reconciliation import get_reconciler
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -135,6 +136,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Initialize broker adapter (fake for testing)
     broker = FakeBrokerAdapter(account_id="DU123456")
     broker.connect()
+    
+    # Initialize reconciler
+    get_reconciler(broker_adapter=broker)
     
     # Initialize order submitter
     order_submitter = OrderSubmitter(
@@ -1189,4 +1193,88 @@ async def disable_feature_flag(flag_name: str):
     }
 
 
-
+@app.get("/api/v1/reconciliation/status")
+async def get_reconciliation_status(account_id: str = "DU123456"):
+    """
+    Perform reconciliation between internal state and broker state.
+    
+    Compares:
+    - Open orders
+    - Positions
+    - Cash balance
+    
+    Args:
+        account_id: Broker account ID (defaults to DU123456)
+        
+    Returns:
+        Reconciliation result with discrepancies.
+        
+    Example:
+        GET /api/v1/reconciliation/status?account_id=DU123456
+        
+        Returns:
+        {
+          "timestamp": "2025-12-25T10:00:00Z",
+          "is_reconciled": false,
+          "discrepancy_count": 2,
+          "has_critical_discrepancies": false,
+          "discrepancies": [
+            {
+              "type": "position_mismatch",
+              "severity": "medium",
+              "description": "Position AAPL mismatch: system=100, broker=95",
+              "internal_value": "100",
+              "broker_value": "95",
+              "difference": 5.0,
+              "symbol": "AAPL",
+              "order_id": null,
+              "detected_at": "2025-12-25T10:00:00Z"
+            }
+          ],
+          "summary": {
+            "internal_orders_count": 1,
+            "broker_orders_count": 1,
+            "internal_positions_count": 2,
+            "broker_positions_count": 2,
+            "internal_cash": 10000.0,
+            "broker_cash": 9950.0
+          },
+          "duration_ms": 123.45
+        }
+    """
+    logger = get_logger()
+    
+    try:
+        # Get reconciler instance (already initialized with broker in lifespan)
+        reconciler = get_reconciler()
+        
+        # For now, use empty internal state (would fetch from approval service/database in production)
+        # TODO: Integrate with real internal state tracking
+        internal_orders = []
+        internal_positions = {}
+        internal_cash = 0.0
+        
+        # Perform reconciliation
+        result = reconciler.reconcile(
+            account_id=account_id,
+            internal_orders=internal_orders,
+            internal_positions=internal_positions,
+            internal_cash=internal_cash
+        )
+        
+        logger.info(
+            "reconciliation_completed",
+            account_id=account_id,
+            is_reconciled=result.is_reconciled,
+            discrepancy_count=result.discrepancy_count,
+            has_critical=result.has_critical_discrepancies
+        )
+        
+        return result.to_dict()
+        
+    except Exception as e:
+        logger.error("reconciliation_failed", error=str(e), account_id=account_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Reconciliation failed: {e}"
+        )
