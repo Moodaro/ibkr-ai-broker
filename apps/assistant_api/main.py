@@ -24,6 +24,7 @@ from packages.safety_checks import get_safety_checker
 from packages.live_config import get_live_config_manager, is_live_trading_enabled
 from packages.live_order_validator import get_live_order_validator
 from packages.trade_journal import get_trade_journal, TradeStatus
+from packages.performance_monitor import get_performance_monitor
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -1680,3 +1681,130 @@ async def export_trade_history(
     except Exception as e:
         logger.error("trade_export_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to export trade history: {e}")
+
+
+# ===========================
+# Performance Monitoring Endpoints
+# ===========================
+
+
+@app.get("/api/v1/performance/operations")
+async def get_performance_operations(since_minutes: Optional[int] = None):
+    """Get performance statistics for all operations."""
+    try:
+        from datetime import datetime, timedelta
+        
+        monitor = get_performance_monitor()
+        
+        # Calculate time filter
+        since = None
+        if since_minutes:
+            since = datetime.utcnow() - timedelta(minutes=since_minutes)
+        
+        stats = monitor.get_all_operation_stats(since=since)
+        
+        logger.info("performance_operations_retrieved", count=len(stats))
+        return {
+            "operations": [s.to_dict() for s in stats],
+            "since_minutes": since_minutes,
+            "count": len(stats)
+        }
+    except Exception as e:
+        logger.error("performance_operations_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve performance stats: {e}")
+
+
+@app.get("/api/v1/performance/operations/{operation_name}")
+async def get_performance_operation(operation_name: str, since_minutes: Optional[int] = None):
+    """Get performance statistics for a specific operation."""
+    try:
+        from datetime import datetime, timedelta
+        
+        monitor = get_performance_monitor()
+        
+        # Calculate time filter
+        since = None
+        if since_minutes:
+            since = datetime.utcnow() - timedelta(minutes=since_minutes)
+        
+        stats = monitor.get_operation_stats(operation_name, since=since)
+        
+        if not stats:
+            raise HTTPException(status_code=404, detail="Operation not found or no data available")
+        
+        logger.info("performance_operation_retrieved", operation=operation_name)
+        return stats.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("performance_operation_failed", operation=operation_name, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve operation stats: {e}")
+
+
+@app.get("/api/v1/performance/system")
+async def get_performance_system():
+    """Get current system performance metrics."""
+    try:
+        monitor = get_performance_monitor()
+        metrics = monitor.get_current_system_metrics()
+        
+        logger.info("performance_system_retrieved")
+        return metrics
+    except Exception as e:
+        logger.error("performance_system_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve system metrics: {e}")
+
+
+@app.get("/api/v1/performance/system/history")
+async def get_performance_system_history(
+    since_minutes: Optional[int] = 30,
+    limit: int = 100
+):
+    """Get historical system performance metrics."""
+    try:
+        from datetime import datetime, timedelta
+        
+        monitor = get_performance_monitor()
+        
+        # Calculate time filter
+        since = datetime.utcnow() - timedelta(minutes=since_minutes)
+        
+        history = monitor.get_system_metrics_history(since=since, limit=limit)
+        
+        logger.info("performance_system_history_retrieved", count=len(history))
+        return {
+            "metrics": [
+                {
+                    "timestamp": m.timestamp.isoformat(),
+                    "cpu_percent": round(m.cpu_percent, 2),
+                    "memory_percent": round(m.memory_percent, 2),
+                    "memory_mb": round(m.memory_mb, 2),
+                    "process_threads": m.process_threads,
+                    "open_files": m.open_files
+                }
+                for m in history
+            ],
+            "since_minutes": since_minutes,
+            "count": len(history)
+        }
+    except Exception as e:
+        logger.error("performance_system_history_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve system history: {e}")
+
+
+@app.get("/api/v1/performance/degradation/{operation_name}")
+async def check_performance_degradation(operation_name: str, window_minutes: int = 15):
+    """Check if an operation has degraded performance."""
+    try:
+        monitor = get_performance_monitor()
+        result = monitor.check_degradation(operation_name, window_minutes)
+        
+        logger.info("performance_degradation_checked",
+                   operation=operation_name,
+                   degraded=result.get("degraded"))
+        return result
+    except Exception as e:
+        logger.error("performance_degradation_check_failed",
+                    operation=operation_name,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to check degradation: {e}")
