@@ -768,13 +768,117 @@ async def get_pending_proposals(limit: int = 100) -> PendingProposalsResponse:
 
 @app.get("/api/v1/health")
 async def health_check() -> dict:
-    """Detailed health check."""
-    return {
+    """Comprehensive health check of all critical components.
+    
+    Returns detailed status of:
+    - Kill switch (active/inactive/error)
+    - Audit store (connected/disconnected)
+    - Broker adapter (connected/disconnected)
+    - Approval service (operational/not initialized)
+    - Risk engine (operational/not initialized)
+    - Trade simulator (operational/not initialized)
+    - Order submitter (operational/not initialized)
+    
+    Returns:
+        dict: Health status with component details
+    """
+    from datetime import datetime, timezone
+    
+    health = {
         "status": "healthy",
-        "audit_store": "connected" if audit_store else "disconnected",
-        "broker": "connected" if broker and broker.is_connected() else "disconnected",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "correlation_id": get_correlation_id() or "none",
+        "components": {},
     }
+    
+    # Check kill switch
+    if kill_switch:
+        try:
+            ks_state = kill_switch.get_state()
+            if ks_state.enabled:
+                health["components"]["kill_switch"] = {
+                    "status": "active",
+                    "message": "⚠️ Kill switch is ACTIVE - trading is halted",
+                    "activated_at": ks_state.activated_at.isoformat() if ks_state.activated_at else None,
+                    "reason": ks_state.reason,
+                }
+                health["status"] = "degraded"
+            else:
+                health["components"]["kill_switch"] = {
+                    "status": "inactive",
+                    "message": "✅ Kill switch is inactive",
+                }
+        except Exception as e:
+            health["components"]["kill_switch"] = {
+                "status": "error",
+                "message": f"❌ Error: {str(e)}",
+            }
+            health["status"] = "degraded"
+    else:
+        health["components"]["kill_switch"] = {
+            "status": "not_initialized",
+            "message": "❌ Not initialized",
+        }
+        health["status"] = "degraded"
+    
+    # Check audit store
+    health["components"]["audit_store"] = {
+        "status": "connected" if audit_store else "disconnected",
+        "message": "✅ Connected" if audit_store else "❌ Disconnected",
+    }
+    if not audit_store:
+        health["status"] = "unhealthy"
+    
+    # Check broker
+    if broker:
+        is_connected = broker.is_connected() if hasattr(broker, "is_connected") else True
+        health["components"]["broker"] = {
+            "status": "connected" if is_connected else "disconnected",
+            "message": "✅ Connected (fake mode)" if is_connected else "❌ Disconnected",
+        }
+        if not is_connected:
+            health["status"] = "degraded"
+    else:
+        health["components"]["broker"] = {
+            "status": "disconnected",
+            "message": "❌ Not initialized",
+        }
+        health["status"] = "unhealthy"
+    
+    # Check approval service
+    health["components"]["approval_service"] = {
+        "status": "operational" if approval_service else "not_initialized",
+        "message": "✅ Operational" if approval_service else "❌ Not initialized",
+    }
+    if not approval_service:
+        health["status"] = "unhealthy"
+    
+    # Check risk engine
+    health["components"]["risk_engine"] = {
+        "status": "operational" if risk_engine else "not_initialized",
+        "message": "✅ Operational" if risk_engine else "❌ Not initialized",
+    }
+    if not risk_engine:
+        health["status"] = "unhealthy"
+    
+    # Check simulator
+    health["components"]["simulator"] = {
+        "status": "operational" if simulator else "not_initialized",
+        "message": "✅ Operational" if simulator else "❌ Not initialized",
+    }
+    if not simulator:
+        health["status"] = "unhealthy"
+    
+    # Check order submitter
+    health["components"]["order_submitter"] = {
+        "status": "operational" if order_submitter else "not_initialized",
+        "message": "✅ Operational" if order_submitter else "❌ Not initialized",
+    }
+    if not order_submitter:
+        health["status"] = "unhealthy"
+    
+    return health
+
 
 
 @app.post("/api/v1/orders/submit", response_model=SubmitOrderResponse)
@@ -895,10 +999,9 @@ async def activate_kill_switch(request: Request, reason: str = "Manual activatio
     
     # Log to audit
     event = AuditEventCreate(
-        event_type=EventType.CUSTOM,
+        event_type=EventType.KILL_SWITCH_ACTIVATED,
         correlation_id=correlation_id,
         data={
-            "custom_event": "kill_switch_activated",
             "reason": reason,
             "activated_at": state.activated_at.isoformat() if state.activated_at else None,
         },
@@ -940,10 +1043,9 @@ async def deactivate_kill_switch(request: Request):
         
         # Log to audit
         event = AuditEventCreate(
-            event_type=EventType.CUSTOM,
+            event_type=EventType.KILL_SWITCH_RELEASED,
             correlation_id=correlation_id,
             data={
-                "custom_event": "kill_switch_deactivated",
                 "deactivated_at": state.activated_at.isoformat() if state.activated_at else None,
             },
         )
@@ -957,3 +1059,4 @@ async def deactivate_kill_switch(request: Request):
     
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
