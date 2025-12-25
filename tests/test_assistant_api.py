@@ -1463,3 +1463,53 @@ class TestApprovalEndpoints:
         assert len(data["proposals"]) == 2
         assert data["count"] == 2
 
+
+class TestMetricsEndpoint:
+    """Test /api/v1/metrics endpoint."""
+    
+    def test_get_metrics_empty(self, client):
+        """Test GET /api/v1/metrics returns Prometheus format."""
+        response = client.get("/api/v1/metrics")
+        
+        assert response.status_code == 200
+        text = response.text
+        
+        # Verify Prometheus format
+        assert "# HELP" in text
+        assert "# TYPE" in text
+        assert "ibkr_broker_info" in text
+        assert "ibkr_uptime_seconds" in text
+        assert "ibkr_daily_pnl_usd" in text
+    
+    def test_get_metrics_with_data(self, client):
+        """Test metrics after risk evaluation."""
+        from packages.metrics_collector import get_metrics_collector
+        
+        # Reset metrics for clean test
+        from packages.metrics_collector import MetricsCollector, set_metrics_collector
+        test_collector = MetricsCollector()
+        set_metrics_collector(test_collector)
+        
+        # Add some test metrics
+        collector = get_metrics_collector()
+        collector.increment_proposal_count("AAPL", "RISK_APPROVED")
+        collector.record_risk_rejection("R1")
+        collector.increment_broker_errors()
+        collector.record_order_latency("submission", 0.250)
+        
+        response = client.get("/api/v1/metrics")
+        
+        assert response.status_code == 200
+        text = response.text
+        
+        # Verify metrics appear in output (note: FastAPI JSON-encodes the response string)
+        assert "ibkr_proposal_total" in text
+        assert "AAPL" in text
+        assert "RISK_APPROVED" in text
+        assert "ibkr_risk_rejection_total" in text
+        assert "R1" in text
+        assert "ibkr_broker_error_total" in text
+        assert "ibkr_submission_latency_seconds_count" in text
+
+
+

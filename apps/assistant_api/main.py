@@ -4,17 +4,19 @@ This module provides the REST API for order proposals, simulation,
 risk evaluation, and approval management.
 """
 
+import time
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
 from packages.structured_logging import get_logger, setup_logging
 
 from packages.approval_service import ApprovalService
+from packages.metrics_collector import get_metrics_collector
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -206,6 +208,26 @@ async def root() -> dict:
         "version": "0.1.0",
         "status": "healthy",
     }
+
+
+@app.get("/api/v1/metrics", response_class=PlainTextResponse)
+async def get_metrics() -> str:
+    """
+    Get Prometheus-formatted metrics.
+    
+    Returns metrics including:
+    - Proposal count by symbol and state
+    - Risk rejection rate by rule
+    - Order latency (submission, fill)
+    - Broker errors
+    - Daily P&L
+    - System uptime
+    
+    Returns:
+        Prometheus text format metrics
+    """
+    collector = get_metrics_collector()
+    return collector.export_prometheus()
 
 
 @app.post("/api/v1/propose", response_model=OrderIntentResponse)
@@ -515,6 +537,13 @@ async def evaluate_risk(request: RiskEvaluationRequest) -> RiskEvaluationRespons
         )
         audit_store.append_event(event)
         
+        # Record metrics
+        collector = get_metrics_collector()
+        if decision.is_rejected():
+            # Track rejection by each violated rule
+            for rule in decision.violated_rules:
+                collector.record_risk_rejection(rule)
+        
         return RiskEvaluationResponse(
             decision=decision.model_dump(),
             correlation_id=correlation_id,
@@ -571,6 +600,14 @@ async def request_approval(request: ApprovalRequest) -> ApprovalResponse:
     try:
         # Request approval
         updated = approval_service.request_approval(request.proposal_id)
+        
+        # Record metrics - proposal count by state
+        collector = get_metrics_collector()
+        # Extract symbol from intent JSON
+        import json
+        intent_data = json.loads(updated.intent_json)
+        symbol = intent_data.get("symbol", "UNKNOWN")
+        collector.increment_proposal_count(symbol=symbol, state=updated.state.value)
         
         # Emit audit event
         event = AuditEventCreate(
@@ -923,6 +960,7 @@ async def submit_order(request: SubmitOrderRequest) -> SubmitOrderResponse:
     try:
         from datetime import datetime, timezone
         current_time = datetime.now(timezone.utc)
+        start_time = time.time()
         
         # Submit order (validates token, consumes it, submits to broker)
         open_order = order_submitter.submit_order(
@@ -931,6 +969,11 @@ async def submit_order(request: SubmitOrderRequest) -> SubmitOrderResponse:
             correlation_id=correlation_id,
             current_time=current_time,
         )
+        
+        # Record submission latency
+        submission_latency = time.time() - start_time
+        collector = get_metrics_collector()
+        collector.record_order_latency("submission", submission_latency)
         
         # Return response
         return SubmitOrderResponse(
