@@ -15,6 +15,11 @@ from packages.schemas.market_data import (
     MarketBar,
     TimeframeType,
 )
+from packages.schemas.instrument import (
+    InstrumentContract,
+    SearchCandidate,
+    InstrumentTypeEnum,
+)
 from .models import (
     Account,
     Instrument,
@@ -178,5 +183,70 @@ class BrokerAdapter(Protocol):
         
         Raises:
             ValueError: If parameters are invalid
+        """
+        ...
+    
+    def search_instruments(
+        self,
+        query: str,
+        type: Optional[InstrumentTypeEnum] = None,
+        exchange: Optional[str] = None,
+        currency: Optional[str] = None,
+        limit: int = 10
+    ) -> List[SearchCandidate]:
+        """Search for instruments matching a query.
+        
+        Args:
+            query: Search query (symbol, name, partial match)
+            type: Optional instrument type filter (STK, OPT, FUT, etc.)
+            exchange: Optional exchange filter (NASDAQ, NYSE, etc.)
+            currency: Optional currency filter (USD, EUR, etc.)
+            limit: Maximum number of results (1-100)
+        
+        Returns:
+            List of SearchCandidate sorted by match_score (descending)
+        
+        Raises:
+            ValueError: If query is empty or limit is invalid
+        """
+        ...
+    
+    def resolve_instrument(
+        self,
+        symbol: str,
+        type: Optional[InstrumentTypeEnum] = None,
+        exchange: Optional[str] = None,
+        currency: Optional[str] = None,
+        con_id: Optional[int] = None
+    ) -> InstrumentContract:
+        """Resolve instrument to exact contract specification.
+        
+        Args:
+            symbol: Instrument symbol
+            type: Optional instrument type
+            exchange: Optional exchange
+            currency: Optional currency
+            con_id: Optional explicit contract ID (highest priority)
+        
+        Returns:
+            Fully resolved InstrumentContract
+        
+        Raises:
+            ValueError: If symbol is invalid
+            InstrumentResolutionError: If resolution is ambiguous or not found
+        """
+        ...
+    
+    def get_contract_by_id(self, con_id: int) -> Optional[InstrumentContract]:
+        """Get instrument contract by IBKR contract ID.
+        
+        Args:
+            con_id: IBKR contract ID
+        
+        Returns:
+            InstrumentContract if found, None otherwise
+        
+        Raises:
+            ValueError: If con_id is invalid (<= 0)
         """
         ...

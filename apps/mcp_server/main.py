@@ -749,6 +749,178 @@ async def handle_get_market_bars(arguments: dict[str, Any]) -> list[TextContent]
         
         emit_audit_event("get_market_bars", correlation_id, {"instrument": instrument, "count": len(bars)}, result)
         
+        return [TextContent(type="text", text=json.dumps(result, indent=2, cls=DecimalEncoder))]
+    except Exception as e:
+        logger.error(f"Error getting market bars: {e}", exc_info=True)
+        emit_audit_event("get_market_bars", correlation_id, {"instrument": instrument}, error=str(e))
+        return [TextContent(type="text", text=f"Error: {e}")]
+
+
+async def handle_instrument_search(arguments: dict[str, Any]) -> list[TextContent]:
+    """Handle instrument search tool call.
+    
+    Args:
+        arguments: Tool arguments containing query, optional filters
+    
+    Returns:
+        List of search candidates with match scores
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        query = arguments.get("query")
+        if not query:
+            raise ValueError("Query is required")
+        
+        type_filter = arguments.get("type")
+        exchange = arguments.get("exchange")
+        currency = arguments.get("currency")
+        limit = arguments.get("limit", 10)
+        
+        emit_audit_event("instrument_search", correlation_id, {
+            "query": query,
+            "type": type_filter,
+            "exchange": exchange,
+            "currency": currency,
+            "limit": limit,
+        })
+        
+        if broker is None:
+            raise RuntimeError("Broker not initialized")
+        
+        candidates = broker.search_instruments(
+            query=query,
+            type=type_filter,
+            exchange=exchange,
+            currency=currency,
+            limit=limit,
+        )
+        
+        result = {
+            "query": query,
+            "total_found": len(candidates),
+            "candidates": [
+                {
+                    "con_id": c.con_id,
+                    "symbol": c.symbol,
+                    "type": c.type,
+                    "exchange": c.exchange,
+                    "currency": c.currency,
+                    "name": c.name,
+                    "match_score": c.match_score,
+                }
+                for c in candidates
+            ],
+        }
+        
+        emit_audit_event("instrument_search", correlation_id, {"query": query, "count": len(candidates)}, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+    except Exception as e:
+        logger.error(f"Error searching instruments: {e}", exc_info=True)
+        emit_audit_event("instrument_search", correlation_id, {"query": arguments.get("query")}, error=str(e))
+        return [TextContent(type="text", text=f"Error: {e}")]
+
+
+async def handle_instrument_resolve(arguments: dict[str, Any]) -> list[TextContent]:
+    """Handle instrument resolution tool call.
+    
+    Args:
+        arguments: Tool arguments containing symbol, optional filters/conId
+    
+    Returns:
+        Resolved InstrumentContract or error with alternatives
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        symbol = arguments.get("symbol")
+        if not symbol:
+            raise ValueError("Symbol is required")
+        
+        type_filter = arguments.get("type")
+        exchange = arguments.get("exchange")
+        currency = arguments.get("currency")
+        con_id = arguments.get("con_id")
+        
+        emit_audit_event("instrument_resolve", correlation_id, {
+            "symbol": symbol,
+            "type": type_filter,
+            "exchange": exchange,
+            "currency": currency,
+            "con_id": con_id,
+        })
+        
+        if broker is None:
+            raise RuntimeError("Broker not initialized")
+        
+        # Attempt resolution
+        from packages.schemas.instrument import InstrumentResolutionError
+        
+        try:
+            contract = broker.resolve_instrument(
+                symbol=symbol,
+                type=type_filter,
+                exchange=exchange,
+                currency=currency,
+                con_id=con_id,
+            )
+            
+            result = {
+                "success": True,
+                "contract": {
+                    "con_id": contract.con_id,
+                    "symbol": contract.symbol,
+                    "type": contract.type,
+                    "exchange": contract.exchange,
+                    "currency": contract.currency,
+                    "local_symbol": contract.local_symbol,
+                    "name": contract.name,
+                    "sector": contract.sector,
+                    "multiplier": contract.multiplier,
+                    "expiry": contract.expiry,
+                    "strike": str(contract.strike) if contract.strike else None,
+                    "right": contract.right,
+                    "tradeable": contract.tradeable,
+                },
+            }
+            
+            emit_audit_event("instrument_resolve", correlation_id, {"symbol": symbol, "con_id": contract.con_id}, result)
+            
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            
+        except InstrumentResolutionError as e:
+            # Return alternatives
+            result = {
+                "success": False,
+                "error": str(e),
+                "alternatives": [
+                    {
+                        "con_id": c.con_id,
+                        "symbol": c.symbol,
+                        "type": c.type,
+                        "exchange": c.exchange,
+                        "currency": c.currency,
+                        "name": c.name,
+                        "match_score": c.match_score,
+                    }
+                    for c in e.candidates
+                ],
+            }
+            
+            emit_audit_event("instrument_resolve", correlation_id, {
+                "symbol": symbol,
+                "ambiguous": True,
+                "alternatives": len(e.candidates)
+            }, result)
+            
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            
+    except Exception as e:
+        logger.error(f"Error resolving instrument: {e}", exc_info=True)
+        emit_audit_event("instrument_resolve", correlation_id, {"symbol": arguments.get("symbol")}, error=str(e))
+        return [TextContent(type="text", text=f"Error: {e}")]
+        
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     except Exception as e:
@@ -959,6 +1131,70 @@ async def main():
                     "required": ["instrument", "timeframe"],
                 },
             ),
+            Tool(
+                name="instrument_search",
+                description="Search for instruments by symbol or name with fuzzy matching. Returns candidates sorted by match score.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query (symbol or name, partial matches supported)",
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["STK", "ETF", "OPT", "FUT", "CASH", "CRYPTO"],
+                            "description": "Optional instrument type filter",
+                        },
+                        "exchange": {
+                            "type": "string",
+                            "description": "Optional exchange filter (e.g., NASDAQ, NYSE, CME)",
+                        },
+                        "currency": {
+                            "type": "string",
+                            "description": "Optional currency filter (e.g., USD, EUR)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum results to return (default: 10, max: 100)",
+                            "minimum": 1,
+                            "maximum": 100,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="instrument_resolve",
+                description="Resolve instrument symbol to exact IBKR contract. Use before creating orders to avoid ambiguity. Returns full contract or alternatives if ambiguous.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "Instrument symbol to resolve (e.g., AAPL, SPY)",
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["STK", "ETF", "OPT", "FUT", "CASH", "CRYPTO"],
+                            "description": "Optional instrument type (recommended for disambiguation)",
+                        },
+                        "exchange": {
+                            "type": "string",
+                            "description": "Optional exchange (recommended for disambiguation)",
+                        },
+                        "currency": {
+                            "type": "string",
+                            "description": "Optional currency (e.g., USD)",
+                        },
+                        "con_id": {
+                            "type": "integer",
+                            "description": "Optional explicit IBKR contract ID (highest priority if provided)",
+                        },
+                    },
+                    "required": ["symbol"],
+                },
+            ),
         ]
     
     # Handle tool calls
@@ -982,6 +1218,10 @@ async def main():
             return await handle_get_market_snapshot(arguments)
         elif name == "get_market_bars":
             return await handle_get_market_bars(arguments)
+        elif name == "instrument_search":
+            return await handle_instrument_search(arguments)
+        elif name == "instrument_resolve":
+            return await handle_instrument_resolve(arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
     

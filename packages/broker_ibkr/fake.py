@@ -20,6 +20,13 @@ from packages.schemas.market_data import (
     MarketBar,
     TimeframeType,
 )
+from packages.schemas.instrument import (
+    InstrumentContract,
+    SearchCandidate,
+    InstrumentTypeEnum,
+    InstrumentResolutionError,
+)
+from difflib import SequenceMatcher
 from .adapter import BrokerAdapter
 from .models import (
     Account,
@@ -56,6 +63,7 @@ class FakeBrokerAdapter:
         self._cash: list[Cash] = self._create_mock_cash()
         self._open_orders: list[OpenOrder] = []
         self._submitted_orders: dict[str, OpenOrder] = {}  # broker_order_id -> order
+        self._instrument_db: dict[int, InstrumentContract] = self._create_mock_instruments()
 
     def connect(self) -> None:
         """Simulate connection."""
@@ -455,3 +463,505 @@ class FakeBrokerAdapter:
             "1M": 43200,  # Approximate
         }
         return mapping.get(timeframe, 60)  # Default to 1h
+    
+    def _create_mock_instruments(self) -> dict[int, InstrumentContract]:
+        """Create mock instrument database.
+        
+        Returns:
+            Dictionary mapping conId to InstrumentContract
+        """
+        instruments = {
+            # US Stocks - Technology
+            265598: InstrumentContract(
+                con_id=265598,
+                symbol="AAPL",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="AAPL",
+                name="Apple Inc.",
+                sector="Technology",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            272093: InstrumentContract(
+                con_id=272093,
+                symbol="MSFT",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="MSFT",
+                name="Microsoft Corporation",
+                sector="Technology",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            208813720: InstrumentContract(
+                con_id=208813720,
+                symbol="GOOGL",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="GOOGL",
+                name="Alphabet Inc. Class A",
+                sector="Technology",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            76792991: InstrumentContract(
+                con_id=76792991,
+                symbol="TSLA",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="TSLA",
+                name="Tesla, Inc.",
+                sector="Automotive",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            3691937: InstrumentContract(
+                con_id=3691937,
+                symbol="AMZN",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="AMZN",
+                name="Amazon.com Inc.",
+                sector="Consumer Cyclical",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            107113386: InstrumentContract(
+                con_id=107113386,
+                symbol="META",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="META",
+                name="Meta Platforms Inc.",
+                sector="Technology",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            417742673: InstrumentContract(
+                con_id=417742673,
+                symbol="NVDA",
+                type="STK",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="NVDA",
+                name="NVIDIA Corporation",
+                sector="Technology",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            # US Stocks - Finance
+            43645865: InstrumentContract(
+                con_id=43645865,
+                symbol="JPM",
+                type="STK",
+                exchange="NYSE",
+                currency="USD",
+                local_symbol="JPM",
+                name="JPMorgan Chase & Co.",
+                sector="Financial",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            8049: InstrumentContract(
+                con_id=8049,
+                symbol="BAC",
+                type="STK",
+                exchange="NYSE",
+                currency="USD",
+                local_symbol="BAC",
+                name="Bank of America Corporation",
+                sector="Financial",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            # US ETFs
+            756733: InstrumentContract(
+                con_id=756733,
+                symbol="SPY",
+                type="ETF",
+                exchange="ARCA",
+                currency="USD",
+                local_symbol="SPY",
+                name="SPDR S&P 500 ETF Trust",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            320227571: InstrumentContract(
+                con_id=320227571,
+                symbol="QQQ",
+                type="ETF",
+                exchange="NASDAQ",
+                currency="USD",
+                local_symbol="QQQ",
+                name="Invesco QQQ Trust",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            9579970: InstrumentContract(
+                con_id=9579970,
+                symbol="IWM",
+                type="ETF",
+                exchange="ARCA",
+                currency="USD",
+                local_symbol="IWM",
+                name="iShares Russell 2000 ETF",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            38708077: InstrumentContract(
+                con_id=38708077,
+                symbol="VTI",
+                type="ETF",
+                exchange="ARCA",
+                currency="USD",
+                local_symbol="VTI",
+                name="Vanguard Total Stock Market ETF",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            115423381: InstrumentContract(
+                con_id=115423381,
+                symbol="AGG",
+                type="ETF",
+                exchange="ARCA",
+                currency="USD",
+                local_symbol="AGG",
+                name="iShares Core U.S. Aggregate Bond ETF",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            33732642: InstrumentContract(
+                con_id=33732642,
+                symbol="EEM",
+                type="ETF",
+                exchange="ARCA",
+                currency="USD",
+                local_symbol="EEM",
+                name="iShares MSCI Emerging Markets ETF",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            11004968: InstrumentContract(
+                con_id=11004968,
+                symbol="XLF",
+                type="ETF",
+                exchange="ARCA",
+                currency="USD",
+                local_symbol="XLF",
+                name="Financial Select Sector SPDR Fund",
+                sector="ETF",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            # Forex
+            12087792: InstrumentContract(
+                con_id=12087792,
+                symbol="EUR",
+                type="FX",
+                exchange="IDEALPRO",
+                currency="USD",
+                local_symbol="EUR.USD",
+                name="Euro vs US Dollar",
+                tradeable=True,
+                min_tick=0.00001,
+                lot_size=20000,
+            ),
+            12087797: InstrumentContract(
+                con_id=12087797,
+                symbol="GBP",
+                type="FX",
+                exchange="IDEALPRO",
+                currency="USD",
+                local_symbol="GBP.USD",
+                name="British Pound vs US Dollar",
+                tradeable=True,
+                min_tick=0.00001,
+                lot_size=20000,
+            ),
+            15016062: InstrumentContract(
+                con_id=15016062,
+                symbol="USD",
+                type="FX",
+                exchange="IDEALPRO",
+                currency="JPY",
+                local_symbol="USD.JPY",
+                name="US Dollar vs Japanese Yen",
+                tradeable=True,
+                min_tick=0.001,
+                lot_size=20000,
+            ),
+            28812380: InstrumentContract(
+                con_id=28812380,
+                symbol="AUD",
+                type="FX",
+                exchange="IDEALPRO",
+                currency="USD",
+                local_symbol="AUD.USD",
+                name="Australian Dollar vs US Dollar",
+                tradeable=True,
+                min_tick=0.00001,
+                lot_size=20000,
+            ),
+            # Futures
+            495512572: InstrumentContract(
+                con_id=495512572,
+                symbol="ES",
+                type="FUT",
+                exchange="CME",
+                currency="USD",
+                local_symbol="ESZ4",
+                name="E-mini S&P 500 Dec 2024",
+                expiry="20241220",
+                multiplier=50,
+                tradeable=True,
+                min_tick=0.25,
+                lot_size=1,
+            ),
+            577164824: InstrumentContract(
+                con_id=577164824,
+                symbol="NQ",
+                type="FUT",
+                exchange="CME",
+                currency="USD",
+                local_symbol="NQZ4",
+                name="E-mini NASDAQ-100 Dec 2024",
+                expiry="20241220",
+                multiplier=20,
+                tradeable=True,
+                min_tick=0.25,
+                lot_size=1,
+            ),
+            # Crypto
+            577146880: InstrumentContract(
+                con_id=577146880,
+                symbol="BTC",
+                type="CRYPTO",
+                exchange="PAXOS",
+                currency="USD",
+                local_symbol="BTC",
+                name="Bitcoin",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+            577147008: InstrumentContract(
+                con_id=577147008,
+                symbol="ETH",
+                type="CRYPTO",
+                exchange="PAXOS",
+                currency="USD",
+                local_symbol="ETH",
+                name="Ethereum",
+                tradeable=True,
+                min_tick=0.01,
+                lot_size=1,
+            ),
+        }
+        return instruments
+    
+    def search_instruments(
+        self,
+        query: str,
+        type: Optional[InstrumentTypeEnum] = None,
+        exchange: Optional[str] = None,
+        currency: Optional[str] = None,
+        limit: int = 10
+    ) -> List[SearchCandidate]:
+        """Search for instruments matching a query."""
+        if not query or not query.strip():
+            raise ValueError("Query cannot be empty")
+        
+        if limit < 1 or limit > 100:
+            raise ValueError("Limit must be between 1 and 100")
+        
+        query = query.strip().upper()
+        candidates = []
+        
+        for contract in self._instrument_db.values():
+            # Apply filters
+            if type and contract.type != type:
+                continue
+            if exchange and contract.exchange != exchange:
+                continue
+            if currency and contract.currency != currency:
+                continue
+            
+            # Calculate match score
+            score = self._calculate_match_score(query, contract.symbol, contract.name or "")
+            
+            if score > 0:
+                candidates.append(SearchCandidate(
+                    con_id=contract.con_id,
+                    symbol=contract.symbol,
+                    type=contract.type,
+                    exchange=contract.exchange,
+                    currency=contract.currency,
+                    name=contract.name,
+                    match_score=score
+                ))
+        
+        # Sort by score (descending) and return top N
+        candidates.sort(key=lambda c: c.match_score, reverse=True)
+        return candidates[:limit]
+    
+    def resolve_instrument(
+        self,
+        symbol: str,
+        type: Optional[InstrumentTypeEnum] = None,
+        exchange: Optional[str] = None,
+        currency: Optional[str] = None,
+        con_id: Optional[int] = None
+    ) -> InstrumentContract:
+        """Resolve instrument to exact contract specification."""
+        if not symbol or not symbol.strip():
+            raise ValueError("Symbol cannot be empty")
+        
+        # Explicit conId has highest priority
+        if con_id:
+            contract = self.get_contract_by_id(con_id)
+            if contract:
+                return contract
+            raise InstrumentResolutionError(
+                f"Contract with conId {con_id} not found",
+                candidates=[]
+            )
+        
+        symbol = symbol.strip().upper()
+        
+        # Exact match
+        matches = []
+        for contract in self._instrument_db.values():
+            if contract.symbol != symbol:
+                continue
+            
+            # Check filters
+            if type and contract.type != type:
+                continue
+            if exchange and contract.exchange != exchange:
+                continue
+            if currency and contract.currency != currency:
+                continue
+            
+            matches.append(contract)
+        
+        if len(matches) == 1:
+            return matches[0]
+        elif len(matches) > 1:
+            # Multiple matches - ambiguous
+            candidates = [
+                SearchCandidate(
+                    con_id=m.con_id,
+                    symbol=m.symbol,
+                    type=m.type,
+                    exchange=m.exchange,
+                    currency=m.currency,
+                    name=m.name,
+                    match_score=1.0
+                )
+                for m in matches
+            ]
+            raise InstrumentResolutionError(
+                f"Multiple contracts found for {symbol}. Specify exchange/currency/type.",
+                candidates=candidates
+            )
+        else:
+            # No exact match - try fuzzy search
+            candidates = self.search_instruments(
+                query=symbol,
+                type=type,
+                exchange=exchange,
+                currency=currency,
+                limit=5
+            )
+            
+            if not candidates:
+                raise InstrumentResolutionError(
+                    f"No contracts found matching '{symbol}'",
+                    candidates=[]
+                )
+            
+            # If best match is very confident (≥0.95), use it
+            if candidates[0].match_score >= 0.95:
+                # Get the full contract from database by con_id
+                contract = self._instrument_db.get(candidates[0].con_id)
+                if contract:
+                    return contract
+            
+            # Otherwise, ambiguous
+            raise InstrumentResolutionError(
+                f"Ambiguous match for '{symbol}'. Best matches found but not confident enough.",
+                candidates=candidates
+            )
+    
+    def get_contract_by_id(self, con_id: int) -> Optional[InstrumentContract]:
+        """Get instrument contract by IBKR contract ID."""
+        if con_id <= 0:
+            raise ValueError("conId must be positive")
+        
+        return self._instrument_db.get(con_id)
+    
+    def _calculate_match_score(self, query: str, symbol: str, name: str) -> float:
+        """Calculate fuzzy match score between query and instrument.
+        
+        Args:
+            query: Search query (normalized to uppercase)
+            symbol: Instrument symbol (normalized to uppercase)
+            name: Instrument name (optional)
+        
+        Returns:
+            Match score 0.0-1.0 (higher is better)
+        """
+        # Exact symbol match
+        if query == symbol:
+            return 1.0
+        
+        # Symbol starts with query
+        if symbol.startswith(query):
+            return 0.9
+        
+        # Fuzzy symbol match
+        symbol_ratio = SequenceMatcher(None, query, symbol).ratio()
+        
+        # Name matching
+        name_score = 0.0
+        if name:
+            name_upper = name.upper()
+            if query in name_upper:
+                name_score = 0.85
+            else:
+                # Check if query matches any word start in name
+                for word in name_upper.split():
+                    if word.startswith(query):
+                        name_score = 0.85
+                        break
+        
+        return max(symbol_ratio, name_score)

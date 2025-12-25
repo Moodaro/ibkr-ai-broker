@@ -1943,3 +1943,234 @@ async def get_market_bars(
                     instrument=instrument,
                     error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to get market bars: {e}")
+
+
+@app.get("/api/v1/instruments/search")
+async def search_instruments(
+    q: str,
+    type: Optional[str] = None,
+    exchange: Optional[str] = None,
+    currency: Optional[str] = None,
+    limit: int = 10
+):
+    """Search for instruments by symbol or name.
+    
+    Args:
+        q: Search query (symbol or name, partial matches supported)
+        type: Optional instrument type filter (STK, ETF, OPT, FUT, CASH, CRYPTO)
+        exchange: Optional exchange filter (e.g., NASDAQ, NYSE, CME)
+        currency: Optional currency filter (e.g., USD, EUR)
+        limit: Maximum results to return (1-100, default 10)
+    
+    Returns:
+        List of search candidates with match scores
+    """
+    try:
+        if broker is None:
+            raise HTTPException(status_code=500, detail="Broker not initialized")
+        
+        # Validate limit
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+        
+        # Validate query
+        if not q or not q.strip():
+            raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
+        
+        candidates = broker.search_instruments(
+            query=q,
+            type=type,
+            exchange=exchange,
+            currency=currency,
+            limit=limit
+        )
+        
+        logger.info("instrument_search_completed",
+                   query=q,
+                   result_count=len(candidates))
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.CUSTOM,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "search_instruments",
+                    "query": q,
+                    "type": type,
+                    "exchange": exchange,
+                    "currency": currency,
+                    "result_count": len(candidates),
+                },
+                metadata={"event_subtype": "instrument_searched"}
+            ))
+        
+        return {
+            "query": q,
+            "total_found": len(candidates),
+            "filters_applied": {
+                "type": type,
+                "exchange": exchange,
+                "currency": currency,
+            },
+            "candidates": [
+                {
+                    "con_id": c.con_id,
+                    "symbol": c.symbol,
+                    "type": c.type,
+                    "exchange": c.exchange,
+                    "currency": c.currency,
+                    "local_symbol": c.symbol,  # SearchCandidate doesn't have local_symbol, use symbol
+                    "name": c.name,
+                    "sector": None,  # SearchCandidate doesn't have sector
+                    "tradeable": True,  # Assume tradeable if in search results
+                    "match_score": c.match_score,
+                }
+                for c in candidates
+            ],
+        }
+    except ValueError as e:
+        logger.error("instrument_search_invalid_params",
+                    query=q,
+                    error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("instrument_search_failed",
+                    query=q,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to search instruments: {e}")
+
+
+@app.post("/api/v1/instruments/resolve")
+async def resolve_instrument(
+    symbol: str,
+    type: Optional[str] = None,
+    exchange: Optional[str] = None,
+    currency: Optional[str] = None,
+    con_id: Optional[int] = None
+):
+    """Resolve instrument symbol to exact IBKR contract.
+    
+    Args:
+        symbol: Instrument symbol to resolve (e.g., AAPL, SPY)
+        type: Optional instrument type (STK, ETF, etc.) for disambiguation
+        exchange: Optional exchange for disambiguation
+        currency: Optional currency (e.g., USD)
+        con_id: Optional explicit IBKR contract ID (highest priority if provided)
+    
+    Returns:
+        Fully resolved InstrumentContract or error with alternatives if ambiguous
+    """
+    try:
+        if broker is None:
+            raise HTTPException(status_code=500, detail="Broker not initialized")
+        
+        # Validate symbol
+        if not symbol or not symbol.strip():
+            raise HTTPException(status_code=400, detail="Symbol is required")
+        
+        from packages.schemas.instrument import InstrumentResolutionError
+        
+        try:
+            contract = broker.resolve_instrument(
+                symbol=symbol,
+                type=type,
+                exchange=exchange,
+                currency=currency,
+                con_id=con_id
+            )
+            
+            logger.info("instrument_resolved",
+                       symbol=symbol,
+                       con_id=contract.con_id,
+                       exchange=contract.exchange)
+            
+            # Emit audit event
+            if audit_store:
+                audit_store.append_event(AuditEventCreate(
+                    event_type=EventType.CUSTOM,
+                    correlation_id=get_correlation_id(),
+                    data={
+                        "endpoint": "resolve_instrument",
+                        "symbol": symbol,
+                        "type": type,
+                        "exchange": exchange,
+                        "currency": currency,
+                        "con_id": con_id,
+                        "resolved_con_id": contract.con_id,
+                        "resolution_method": "conId" if con_id else "exact" if (type and exchange) else "fuzzy",
+                    },
+                    metadata={"event_subtype": "instrument_resolved"}
+                ))
+            
+            return {
+                "success": True,
+                "ambiguous": False,
+                "contract": {
+                    "con_id": contract.con_id,
+                    "symbol": contract.symbol,
+                    "type": contract.type,
+                    "exchange": contract.exchange,
+                    "currency": contract.currency,
+                    "local_symbol": contract.local_symbol,
+                    "name": contract.name,
+                    "sector": contract.sector,
+                    "multiplier": contract.multiplier,
+                    "expiry": contract.expiry,
+                    "strike": str(contract.strike) if contract.strike else None,
+                    "right": contract.right,
+                    "min_tick": contract.min_tick,
+                    "lot_size": contract.lot_size,
+                    "tradeable": contract.tradeable,
+                },
+                "resolution_method": "conId" if con_id else "exact" if (type and exchange) else "fuzzy",
+            }
+            
+        except InstrumentResolutionError as e:
+            # Ambiguous - return alternatives
+            logger.warning("instrument_resolution_ambiguous",
+                          symbol=symbol,
+                          alternatives=len(e.candidates))
+            
+            # Emit audit event
+            if audit_store:
+                audit_store.append_event(AuditEventCreate(
+                    event_type=EventType.CUSTOM,
+                    correlation_id=get_correlation_id(),
+                    data={
+                        "endpoint": "resolve_instrument",
+                        "symbol": symbol,
+                        "ambiguous": True,
+                        "alternatives_count": len(e.candidates),
+                    },
+                    metadata={"event_subtype": "instrument_resolution_ambiguous"}
+                ))
+            
+            return {
+                "success": False,
+                "ambiguous": True,
+                "error": str(e),
+                "alternatives": [
+                    {
+                        "con_id": c.con_id,
+                        "symbol": c.symbol,
+                        "type": c.type,
+                        "exchange": c.exchange,
+                        "currency": c.currency,
+                        "name": c.name,
+                        "match_score": c.match_score,
+                    }
+                    for c in e.candidates
+                ],
+            }
+            
+    except ValueError as e:
+        logger.error("instrument_resolve_invalid_params",
+                    symbol=symbol,
+                    error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("instrument_resolve_failed",
+                    symbol=symbol,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to resolve instrument: {e}")
