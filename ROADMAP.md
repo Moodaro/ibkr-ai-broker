@@ -1,10 +1,283 @@
-# Roadmap completa: IBKR Paper→Live + Assistente LLM + MCP
+# Roadmap IBKR Paper→Live + Assistente LLM + MCP (v2)
 
-> **Scopo**: costruire un sistema affidabile che usa Interactive Brokers (IBKR) in **paper trading** per leggere dati e simulare ordini, con un assistente LLM che **propone** azioni in formato strutturato, un **Risk Gate deterministico** che **decide**, e un flusso **two-step commit** che evita esecuzioni accidentali. Solo dopo mesi di evidenza e guardrail si abilita il live per azioni "banali" (es. ribilanciamento periodico entro soglie).
+> **Stato**: roadmap originale completata (Sprint 0–11, 25 dicembre 2025). Questa v2 serve a guidare i **prossimi upgrade** confrontandoci con i migliori MCP IBKR esistenti (community) e colmando i gap: **market data storico, connessione/reconnect, instrument resolution, Flex queries**, e hardening MCP (permessi/versioning).
+> 
+> **Filosofia invariata**: *LLM propone* → *simulazione* → *risk gate deterministico* → *approvazione umana/token* → *submit* → *audit end-to-end*.
 
 ---
 
-## 1) Principi non negoziabili
+## 0) Principi invariati (non negoziabili)
+
+* **No direct LLM-to-broker writes**: ogni azione write passa da Risk Gate + ApprovalToken.
+* **Tool separation**: `read-only` vs `gated-write` vs `human-only`.
+* **Audit append-only** su tutte le transizioni, incluse le chiamate MCP.
+* **Kill switch** sempre disponibile e verificabile.
+
+---
+
+## 1) Sprint completati (recap)
+
+### Sprint 0 — Bootstrap ✅ (27/01/2025)
+Repository structure, AGENTS.md, devcontainer, CI/CD, pre-commit hooks.
+
+### Sprint 1 — Audit Foundation ✅ (27/01/2025)
+AuditEvent models, SQLite storage, correlation middleware, 21 tests.
+
+### Sprint 2 — IBKR Read-Only (Paper) ✅
+FakeBrokerAdapter, portfolio/positions/cash endpoints, integration tests.
+
+### Sprint 3 — Order Schemas + Structured Proposals ✅
+OrderIntent validation, `/propose` endpoint, 77 tests, full audit integration.
+
+### Sprint 4 — Trade Simulator v1 ✅ (25/12/2025)
+Deterministic simulation, slippage/fee models, 21 tests, constraint validation.
+
+### Sprint 5 — Risk Engine v1 ✅ (25/12/2025)
+8 risk rules (R1-R8), risk_policy.yml, 16 tests, `/evaluate` endpoint.
+
+### Sprint 6 — Two-Step Commit + Approval ✅ (25/12/2025)
+ApprovalService, ApprovalToken (monouso), state machine, 28 tests, Streamlit dashboard.
+
+### Sprint 7 — MCP Server Foundation ✅
+MCP protocol implementation, tool catalog v1, basic tools, integration tests.
+
+### Sprint 8 — Enhanced Risk Engine ✅
+Advanced rules (volatility, correlation), dynamic limits, backtesting support.
+
+### Sprint 9 — Order Submission + Lifecycle ✅
+Submit implementation with FakeBroker, order tracking, status updates, cancellation.
+
+### Sprint 10 — Production Hardening ✅
+Metrics collection, health checks, backup/recovery, feature flags, alerting, runbook.
+
+### Sprint 11 — Pre-Live Trading Preparation ✅ (25/12/2025)
+**6 tasks completati:**
+1. Portfolio reconciliation (broker vs internal state)
+2. Paper trading statistics dashboard (win rate, P&L, drawdown)
+3. Pre-live safety checks (15 verification points)
+4. Live trading infrastructure (config, broker selector, validator, API)
+5. Order history and trade journal (SQLite, 4 API endpoints, 24 tests)
+6. Performance monitoring (latency tracking, system metrics, 5 API endpoints, 21 tests)
+
+**Totale Sprint 11**: 137 nuovi test, 7,048 righe codice, 8 moduli, 15 endpoint API.
+
+**Test totali progetto**: 416 test (395 passing, 21 nuovi performance monitor).
+
+---
+
+## 2) Gap analysis rispetto agli MCP IBKR community
+
+### 2.1 Dove siamo già avanti
+
+* Safety pattern completo: simulazione + risk + two-step commit + token anti-tamper.
+* Dashboard approvazioni + audit + metrics + feature flags + runbook.
+
+### 2.2 Feature tipiche MCP community da importare (senza snaturare il design)
+
+1. **Market data toolset**: snapshot + **historical bars**
+2. **Connessione/diagnostica**: `connection_status`, `reconnect`
+3. **Instrument resolution**: `search/resolve` (symbol → contract univoco / conId)
+4. **Flex Queries**: estratti, trades, P&L realizzato, riconciliazioni
+5. (Opz.) **Cancel/modify order** gated, con policy e audit
+
+---
+
+## 3) Roadmap v2 (post-Sprint 11)
+
+### Epic A — IBKR Adapter "Real" (Gateway/Client Portal) + parity con FakeBroker
+
+**Goal**: portare i tool MCP e l'API ad usare **IBKR paper reale** mantenendo fallback Fake.
+
+**Deliverable**
+
+* `IBKRBrokerAdapter` (paper) per: portfolio, positions, cash, open orders, submit, status, cancel.
+* `ConnectionManager` + health checks.
+
+**Acceptance criteria**
+
+* E2E paper: propose→simulate→risk→approve→submit→fill su almeno 3 strumenti (STK/ETF/FX o CRYPTO se supportato).
+* Retry/backoff + circuit breaker testati.
+
+---
+
+### Epic B — Market Data v2 (Snapshot + Historical Bars)
+
+**Perché**: serve per analisi coerente, indicatori, backtest leggero e risk basato su volatilità.
+
+**Nuovi tool MCP (read-only)**
+
+* `market.get_snapshot(instrument, fields=[bid,ask,last,mid,volume])`
+* `market.get_bars(instrument, timeframe, start, end, rth_only?, source="ibkr")`
+
+**API interne**
+
+* `GET /api/v1/market/snapshot`
+* `GET /api/v1/market/bars`
+
+**Tests**
+
+* Contract tests sugli output schema
+* Caching & staleness tests (es. max_age_seconds)
+
+---
+
+### Epic C — Instrument Resolution (Search/Resolve)
+
+**Perché**: IBKR richiede precisione (exchange/currency, conId). Riduce rifiuti e ambiguità.
+
+**Nuovi tool MCP (read-only)**
+
+* `instrument.search(query, type?, exchange?, currency?) -> candidates[]`
+* `instrument.resolve(symbol, exchange?, currency?, type?) -> contract{conId,...}`
+
+**Acceptance criteria**
+
+* Ogni `OrderIntent` deve contenere o derivare `conId` (o equivalente) via resolve.
+* Audit: `InstrumentResolved` event.
+
+---
+
+### Epic D — Flex Queries (Reporting & Reconciliation)
+
+**Perché**: statement, trade confirmations, realized P&L, riconciliazione e post-mortem.
+
+**Nuovi tool MCP (read-only)**
+
+* `flex.list_queries()`
+* `flex.run_query(query_id, from?, to?)`
+* `flex.forget_query(query_id)` (opz.)
+
+**Backoffice**
+
+* Parsing robusto (XML/CSV) + normalizzazione
+* Storage append-only dei report scaricati (hash + retention)
+
+**Acceptance criteria**
+
+* Generazione report giornaliero/settimanale automatico (paper) con audit.
+
+---
+
+### Epic E — MCP Permission Model + Versioning + Hardening
+
+**Perché**: evitare escalation tool, rendere stabile il client e prevenire prompt injection.
+
+**Improvements**
+
+* Catalog tool versionato: `toolName@v1` (o namespace `broker.v1.get_positions`).
+* Allowlist parametrica + policy per tool.
+* Rate limit per tool e per session.
+* Redaction output (PII/segreti).
+
+**Acceptance criteria**
+
+* Nessun tool write esposto oltre `request_approval`.
+* `request_approval` rifiuta qualsiasi parametro non nello schema.
+
+---
+
+### Epic F — Order Management v2 (Cancel/Modify) — *GATED*
+
+**Nota**: solo dopo stabilità paper e policy chiare.
+
+**Nuovi tool MCP (gated-write)**
+
+* `orders.request_cancel(proposal_or_broker_order_id, reason)` → crea richiesta di approvazione
+* (Opz.) `orders.request_modify(... )` → solo limit orders, entro soglie
+
+**Acceptance criteria**
+
+* Cancel/modify passa da risk gate + approval.
+* Audit completo su `OrderCancelRequested/Approved/Executed`.
+
+---
+
+### Epic G — Strategy "banali" (Policy Auto-Commit controllate)
+
+**Perché**: portare valore reale senza scalping.
+
+**Esempi**
+
+* Rebalance mensile ETF entro 0.5% NAV per trade
+* DCA programmato con size minima
+
+**Acceptance criteria**
+
+* Feature flag per auto-commit
+* Kill switch interrompe immediatamente
+
+---
+
+## 4) Tool Catalog v2 (proposta)
+
+### 4.1 Read-only tools
+
+* `broker.get_portfolio`
+* `broker.get_positions`
+* `broker.get_cash`
+* `broker.get_open_orders`
+* `broker.connection_status`
+* `broker.reconnect`
+* `market.get_snapshot`
+* `market.get_bars`
+* `instrument.search`
+* `instrument.resolve`
+* `trade.simulate_order`
+* `risk.evaluate`
+* `flex.list_queries`
+* `flex.run_query`
+
+### 4.2 Gated-write tools (LLM può chiamare, ma non esegue)
+
+* `orders.request_approval` (già)
+* `orders.request_cancel` (futuro)
+* `orders.request_modify` (futuro)
+
+### 4.3 Human-only (dashboard/API)
+
+* `approval.grant / deny`
+* `orders.submit` (token richiesto)
+* `killswitch.activate / release`
+
+---
+
+## 5) Priorità consigliata (ordine di implementazione)
+
+1. **Epic B Market Data v2** (snapshot + historical bars)
+2. **Epic C Instrument Resolution**
+3. **Epic A IBKR Adapter Real (paper)**
+4. **Epic D Flex Queries**
+5. **Epic E MCP Hardening/Versioning**
+6. **Epic F Cancel/Modify gated**
+7. **Epic G Auto-commit banale**
+
+---
+
+## 6) Definition of Done v2 (per ogni epic)
+
+* ✅ Schemi input/output aggiornati (Pydantic + MCP inputSchema)
+* ✅ Audit events aggiunti per ogni transizione nuova
+* ✅ Test: unit + integration + (quando possibile) E2E paper
+* ✅ Runbook aggiornato (procedure operative)
+* ✅ Metrics/alerts aggiornati (se impatta operatività)
+
+---
+
+## 7) Note operative
+
+* Tenere sempre `FakeBrokerAdapter` come "golden" deterministico per test e regressioni.
+* Non introdurre tool write diretti in MCP: tutto deve restare in pattern gated.
+* Market data e instrument resolution migliorano anche risk e simulator (volatility-aware).
+
+---
+
+## 8) Registro modifiche (v2)
+
+* **v2.0 (25 dicembre 2025)**: aggiunte Epics A–G, Tool Catalog v2, hardening MCP, parity con MCP community. Post Sprint 11 completion.
+
+---
+
+## 9) Checklist per passare da Paper a Live (riferimento)
 
 ### 1.1 Separazione dei ruoli
 
