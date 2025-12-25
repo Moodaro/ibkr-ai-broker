@@ -9,15 +9,28 @@ The MCP server provides a standardized interface for Large Language Models to qu
 ### Security Model
 
 🔒 **Critical Safety Features:**
-- ✅ All tools are **read-only** (no order submission exposed)
-- ✅ Order execution requires out-of-band approval (dashboard or API)
+- ✅ Read-only tools for data access (no direct order execution)
+- ✅ Gated write tool (`request_approval`) creates proposals but does NOT execute
+- ✅ Human approval required via dashboard for all order execution
 - ✅ All tool calls audited with correlation_id
 - ✅ Parameter validation on all inputs
 - ✅ FakeBrokerAdapter for testing (no real broker access)
 
+### Gated AI Pattern
+
+The MCP server implements the **gated AI pattern**:
+- LLM can **READ** portfolio data (get_portfolio, get_positions, etc.)
+- LLM can **ANALYZE** trades (simulate_order, evaluate_risk)
+- LLM can **PROPOSE** orders (request_approval) ← Creates proposal, awaits human
+- LLM **CANNOT EXECUTE** orders (no token access, no submit endpoint)
+
+Human retains full control: proposals are created but require explicit dashboard approval before execution.
+
 ## Available Tools
 
-### 1. `get_portfolio`
+### Read-Only Tools
+
+#### 1. `get_portfolio`
 Get complete portfolio snapshot including positions and cash.
 
 **Parameters:**
@@ -48,7 +61,7 @@ Get complete portfolio snapshot including positions and cash.
 }
 ```
 
-### 2. `get_positions`
+#### 2. `get_positions`
 Get list of open positions.
 
 **Parameters:**
@@ -62,7 +75,7 @@ Get list of open positions.
 }
 ```
 
-### 3. `get_cash`
+#### 3. `get_cash`
 Get cash balances by currency.
 
 **Parameters:**
@@ -81,7 +94,7 @@ Get cash balances by currency.
 }
 ```
 
-### 4. `get_open_orders`
+#### 4. `get_open_orders`
 Get list of open orders.
 
 **Parameters:**
@@ -105,7 +118,7 @@ Get list of open orders.
 }
 ```
 
-### 5. `simulate_order`
+#### 5. `simulate_order`
 Simulate order to estimate cash impact, fees, and slippage.
 
 **Parameters:**
@@ -134,7 +147,7 @@ Simulate order to estimate cash impact, fees, and slippage.
 }
 ```
 
-### 6. `evaluate_risk`
+#### 6. `evaluate_risk`
 Evaluate order against risk rules (R1-R8).
 
 **Parameters:**
@@ -154,6 +167,88 @@ Evaluate order against risk rules (R1-R8).
   }
 }
 ```
+
+### Gated Write Tool
+
+#### 7. `request_approval` (GATED)
+**Create order proposal and request human approval.**
+
+This is the ONLY write operation exposed to LLMs. It creates a proposal but does NOT execute the order. Human approval via dashboard is required before order submission.
+
+**Security:**
+- ✅ Validates all parameters (including reason length ≥ 10 chars)
+- ✅ Simulates order BEFORE creating proposal
+- ✅ Evaluates risk BEFORE creating proposal
+- ✅ Returns proposal_id (NOT approval token)
+- ✅ Instructs user to use dashboard for approval
+- ✅ Full audit trail with correlation_id
+
+**Parameters:**
+- `account_id` (string, required): Account identifier
+- `symbol` (string, required): Stock symbol
+- `side` (string, required): "BUY" or "SELL"
+- `quantity` (string, required): Quantity as decimal string
+- `order_type` (string): "MKT" or "LMT" (default: "MKT")
+- `limit_price` (string, optional): Required for LMT orders
+- `market_price` (string, required): Current market price
+- `reason` (string, required): Justification for order (minimum 10 characters)
+
+**Returns (Success):**
+```json
+{
+  "status": "APPROVAL_REQUESTED",
+  "proposal_id": "550e8400-e29b-41d4-a716-446655440000",
+  "decision": "APPROVE",
+  "reason": "Order approved by risk engine",
+  "warnings": [],
+  "symbol": "AAPL",
+  "side": "BUY",
+  "quantity": "10",
+  "estimated_cost": "1905.00",
+  "message": "Proposal created and awaiting human approval. Use dashboard to approve or deny."
+}
+```
+
+**Returns (Risk Rejection):**
+```json
+{
+  "status": "RISK_REJECTED",
+  "decision": "REJECT",
+  "reason": "R1: Notional exceeds maximum allowed ($100,000)",
+  "violated_rules": ["R1"],
+  "proposal_id": null
+}
+```
+
+**Returns (Simulation Failure):**
+```json
+{
+  "status": "SIMULATION_FAILED",
+  "error": "Insufficient cash available for purchase",
+  "proposal_id": null
+}
+```
+
+**Workflow:**
+1. LLM calls `request_approval` with order details + reason
+2. MCP server validates parameters (reason must be ≥ 10 chars)
+3. Server simulates order (checks if feasible)
+4. Server evaluates risk (R1-R8 rules)
+5. If simulation succeeds AND risk approves:
+   - Creates proposal in ApprovalService
+   - Requests approval (state → APPROVAL_REQUESTED)
+   - Returns proposal_id to LLM
+6. Human reviews proposal in dashboard
+7. Human clicks "Approve" → generates approval token
+8. Human (or system) calls POST /api/v1/orders/submit with token
+9. Order submitted to broker
+
+**Why Gated?**
+- LLM can propose actionable orders with full context
+- LLM provides reasoning (required field)
+- Human retains final decision power
+- System enforces security (no direct execution)
+- Complete audit trail maintained
 
 ## Running the Server
 
@@ -246,21 +341,74 @@ LLM calls: evaluate_risk(
 Response: APPROVE or REJECT with reasons
 ```
 
+### Request Order Approval (Gated)
+
+```
+User: "Buy 10 shares of AAPL for portfolio rebalancing"
+LLM calls: request_approval(
+  account_id="DU123456",
+  symbol="AAPL",
+  side="BUY",
+  quantity="10",
+  market_price="190.00",
+  reason="Portfolio rebalancing to target allocation"
+)
+Response: {
+  "status": "APPROVAL_REQUESTED",
+  "proposal_id": "550e8400-...",
+  "message": "Proposal created and awaiting human approval..."
+}
+LLM: "I've created proposal 550e8400 for 10 shares of AAPL at estimated cost $1,905. 
+     Please review in the dashboard to approve or deny."
+```
+
+Human then:
+1. Opens dashboard
+2. Reviews proposal 550e8400 with full details (intent, simulation, risk)
+3. Clicks "Approve" → generates token
+4. System submits order with token
+
 ## Important: Order Execution Flow
 
-⚠️ **The MCP server CANNOT execute orders.**
+⚠️ **The MCP server can create proposals but CANNOT execute orders.**
 
-To execute an order after LLM analysis:
+### Complete Flow (with request_approval)
+
+1. **LLM Analysis Phase:**
+   - LLM uses `get_portfolio` to understand current holdings
+   - LLM uses `simulate_order` to estimate impact
+   - LLM uses `evaluate_risk` to check rules
+
+2. **LLM Proposal Phase:**
+   - LLM calls `request_approval` with order details + reason
+   - MCP server validates, simulates, evaluates risk
+   - If approved by risk engine: creates proposal
+   - Returns proposal_id to LLM (NOT approval token)
+
+3. **Human Approval Phase:**
+   - Human opens dashboard
+   - Reviews proposal with full context (intent, simulation, risk decision)
+   - Decides: Approve or Deny
+
+4. **Execution Phase (if approved):**
+   - Dashboard generates approval token (on human approval)
+   - System calls POST /api/v1/orders/submit with token
+   - Token validated (expiration, single-use, hash)
+   - Order submitted to broker
+
+This ensures **human-in-the-loop** for all trade execution.
+
+### Without request_approval (Manual Flow)
+
+If not using `request_approval` tool:
 
 1. LLM uses `simulate_order` + `evaluate_risk`
-2. LLM provides recommendation
-3. **Human** uses dashboard or API to:
+2. LLM provides recommendation to human
+3. **Human** manually uses dashboard or API to:
    - Create proposal (POST /api/v1/propose)
    - Request approval (POST /api/v1/approval/request)
    - Grant approval (POST /api/v1/approval/{id}/grant)
    - Submit order (POST /api/v1/orders/submit with token)
-
-This ensures **human-in-the-loop** for all trade execution.
 
 ## Audit Trail
 
@@ -284,36 +432,56 @@ sqlite3 mcp_audit.db "SELECT * FROM audit_events WHERE event_type = 'CUSTOM' AND
 └──────┬──────┘
        │ MCP Protocol (stdio)
        ↓
-┌─────────────────────┐
-│   MCP Server        │
-│   (main.py)         │
-├─────────────────────┤
-│ Tools:              │
-│ - get_portfolio     │ → Read-only
-│ - get_positions     │ → Read-only
-│ - simulate_order    │ → Read-only
-│ - evaluate_risk     │ → Read-only
-└──────┬──────────────┘
+┌──────────────────────────┐
+│   MCP Server (main.py)   │
+├──────────────────────────┤
+│ Read Tools:              │
+│ - get_portfolio          │ → Portfolio data
+│ - get_positions          │ → Open positions
+│ - get_cash               │ → Cash balances
+│ - get_open_orders        │ → Pending orders
+│ - simulate_order         │ → Pre-trade analysis
+│ - evaluate_risk          │ → Risk rule check
+│                          │
+│ Gated Write Tool:        │
+│ - request_approval 🔒    │ → Create proposal (NO execution)
+└──────┬───────────────────┘
        │
        ↓
-┌─────────────────────┐
-│  FakeBrokerAdapter  │ → No real broker access
-│  TradeSimulator     │
-│  RiskEngine         │
-│  AuditStore         │
-└─────────────────────┘
+┌──────────────────────────┐
+│  Service Layer           │
+├──────────────────────────┤
+│  FakeBrokerAdapter       │ → No real broker access
+│  TradeSimulator          │ → Impact calculation
+│  RiskEngine              │ → R1-R8 evaluation
+│  ApprovalService         │ → Proposal storage
+│  AuditStore              │ → Event logging
+└──────────────────────────┘
+
+      Human Approval Required
+               ↓
+┌──────────────────────────┐
+│  Dashboard / API         │
+│  POST /orders/submit     │ → WITH approval token
+└──────────────────────────┘
+               ↓
+        Order Executed
 ```
 
 ## Security Notes
 
-1. **No Write Operations**: MCP server exposes ONLY read-only tools
+1. **Read + Analyze + Propose (but NOT Execute)**: 
+   - MCP server exposes 6 read-only tools for data access
+   - MCP server exposes 1 gated write tool (`request_approval`) that creates proposals
+   - Proposals require human approval before execution
 2. **Gated Execution**: Order submission requires:
-   - Separate API endpoint
+   - Separate API endpoint (POST /api/v1/orders/submit)
    - Human approval with token
    - Token validation (expiration, single-use, hash)
 3. **Audit Everything**: All tool calls logged with correlation_id
 4. **Validation**: All parameters validated against schemas
-5. **Fake Broker**: Uses FakeBrokerAdapter (no real broker connection)
+5. **Fake Broker**: Uses FakeBrokerAdapter (no real broker connection in dev/test)
+6. **Reason Required**: `request_approval` requires ≥ 10 char reason (prevents thoughtless requests)
 
 ## Development
 
@@ -350,9 +518,14 @@ Use test account ID: "DU123456" (FakeBrokerAdapter)
 
 ## Next Steps
 
-After Sprint 8:
-- Sprint 9: Add gated tool `request_approval` (creates proposal but doesn't execute)
+Sprint 9 Complete ✅:
+- Added gated tool `request_approval` (creates proposal but doesn't execute)
+- LLM can now propose orders with reasoning
+- Human retains full approval control
+
+Future Sprints:
 - Sprint 10: Add rate limiting and OAuth for production
+- Sprint 11: Real IBKR broker integration
 
 ## References
 

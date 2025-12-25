@@ -1,16 +1,18 @@
 """
 MCP Server main entry point for IBKR AI Broker.
 
-Exposes read-only tools via Model Context Protocol:
+Exposes tools via Model Context Protocol:
 - get_portfolio: Retrieve portfolio snapshot
 - get_positions: List open positions
 - get_cash: Get cash balances
 - get_open_orders: List pending orders
 - simulate_order: Pre-trade simulation
 - evaluate_risk: Risk gate evaluation
+- request_approval: Create order proposal (GATED - requires human approval)
 
 Security:
-- NO order submission tools (gated operations not exposed)
+- request_approval creates proposals but does NOT execute orders
+- Human approval required via dashboard
 - All tool calls audited
 - Parameter validation required
 - Rate limiting support
@@ -31,9 +33,10 @@ from mcp.types import Tool, TextContent
 from packages.audit_store import AuditStore, AuditEventCreate, EventType
 from packages.broker_ibkr.fake import FakeBrokerAdapter
 from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
-from packages.risk_engine import RiskEngine, RiskLimits, TradingHours
+from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
 from packages.trade_sim import TradeSimulator, SimulationConfig
+from packages.approval_service import ApprovalService
 
 
 # Global services (initialized on startup)
@@ -41,6 +44,7 @@ audit_store: Optional[AuditStore] = None
 broker: Optional[FakeBrokerAdapter] = None
 simulator: Optional[TradeSimulator] = None
 risk_engine: Optional[RiskEngine] = None
+approval_service: Optional[ApprovalService] = None
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -468,9 +472,137 @@ async def handle_evaluate_risk(arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    Request approval for an order (GATED TOOL).
+    
+    This tool creates a proposal, simulates it, evaluates risk, and if approved,
+    requests human approval. Returns proposal_id for tracking.
+    
+    Args:
+        account_id: Account identifier
+        symbol: Instrument symbol
+        side: BUY or SELL
+        quantity: Order quantity
+        order_type: MKT, LMT, etc.
+        limit_price: (optional) Limit price for LMT orders
+        market_price: Current market price
+        reason: Reason for the order (min 10 chars)
+        
+    Returns:
+        Proposal ID and status (RISK_APPROVED + APPROVAL_REQUESTED or RISK_REJECTED)
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        # Parse and validate parameters
+        account_id = arguments.get("account_id")
+        symbol = arguments.get("symbol")
+        side = arguments.get("side")
+        quantity_str = arguments.get("quantity")
+        order_type = arguments.get("order_type", "MKT")
+        limit_price_str = arguments.get("limit_price")
+        market_price_str = arguments.get("market_price")
+        reason = arguments.get("reason")
+        
+        if not all([account_id, symbol, side, quantity_str, market_price_str, reason]):
+            raise ValueError("Missing required parameters: account_id, symbol, side, quantity, market_price, reason")
+        
+        if len(reason) < 10:
+            raise ValueError("Reason must be at least 10 characters")
+        
+        quantity = Decimal(quantity_str)
+        market_price = Decimal(market_price_str)
+        limit_price = Decimal(limit_price_str) if limit_price_str else None
+        
+        emit_audit_event("request_approval", correlation_id, arguments)
+        
+        if broker is None or simulator is None or risk_engine is None or approval_service is None:
+            raise RuntimeError("Services not initialized")
+        
+        # Get portfolio
+        portfolio = broker.get_portfolio(account_id)
+        
+        # Create order intent
+        intent = OrderIntent(
+            account_id=account_id,
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol=symbol,
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=side.upper(),
+            quantity=quantity,
+            order_type=order_type.upper(),
+            limit_price=limit_price,
+            time_in_force="DAY",
+            reason=reason,
+            strategy_tag="mcp_request",
+            constraints={},
+        )
+        
+        # Simulate
+        sim_result = simulator.simulate(portfolio, intent, market_price)
+        
+        if sim_result.status != "SUCCESS":
+            result = {
+                "status": "SIMULATION_FAILED",
+                "error": sim_result.error_message,
+                "proposal_id": None,
+            }
+            emit_audit_event("request_approval", correlation_id, arguments, result)
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        
+        # Evaluate risk
+        risk_decision = risk_engine.evaluate(portfolio, intent, sim_result)
+        
+        if risk_decision.decision == Decision.REJECT:
+            result = {
+                "status": "RISK_REJECTED",
+                "decision": risk_decision.decision.value,
+                "reason": risk_decision.reason,
+                "violated_rules": [v.rule_id for v in risk_decision.violations],
+                "proposal_id": None,
+            }
+            emit_audit_event("request_approval", correlation_id, arguments, result)
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        
+        # Risk approved - store proposal and request approval
+        proposal = approval_service.store_proposal(
+            intent=intent,
+            sim_result=sim_result,
+            risk_decision=risk_decision,
+        )
+        
+        # Request approval
+        approval_service.request_approval(proposal.proposal_id)
+        
+        result = {
+            "status": "APPROVAL_REQUESTED",
+            "proposal_id": proposal.proposal_id,
+            "decision": risk_decision.decision.value,
+            "reason": risk_decision.reason,
+            "warnings": risk_decision.warnings,
+            "symbol": symbol,
+            "side": side.upper(),
+            "quantity": str(quantity),
+            "estimated_cost": str(sim_result.net_cash_impact),
+            "message": "Proposal created and awaiting human approval. Use dashboard to approve or deny.",
+        }
+        
+        emit_audit_event("request_approval", correlation_id, arguments, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2, cls=DecimalEncoder))]
+    
+    except Exception as e:
+        emit_audit_event("request_approval", correlation_id, arguments, error=str(e))
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
 async def main():
     """Main entry point for MCP server."""
-    global audit_store, broker, simulator, risk_engine
+    global audit_store, broker, simulator, risk_engine, approval_service
     
     # Initialize services
     print("Initializing MCP server...")
@@ -488,6 +620,8 @@ async def main():
         daily_trades_count=0,
         daily_pnl=Decimal("0"),
     )
+    
+    approval_service = ApprovalService(max_proposals=1000)
     
     print("Services initialized.")
     
@@ -588,6 +722,24 @@ async def main():
                     "required": ["account_id", "symbol", "side", "quantity", "market_price"],
                 },
             ),
+            Tool(
+                name="request_approval",
+                description="Request approval for an order (GATED). Creates proposal, simulates, evaluates risk, and requests human approval. Returns proposal_id.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "account_id": {"type": "string", "description": "Account identifier"},
+                        "symbol": {"type": "string", "description": "Stock symbol"},
+                        "side": {"type": "string", "enum": ["BUY", "SELL"], "description": "Order side"},
+                        "quantity": {"type": "string", "description": "Quantity as decimal string"},
+                        "order_type": {"type": "string", "enum": ["MKT", "LMT"], "default": "MKT", "description": "Order type"},
+                        "limit_price": {"type": "string", "description": "Limit price (required for LMT)"},
+                        "market_price": {"type": "string", "description": "Current market price"},
+                        "reason": {"type": "string", "description": "Reason for order (min 10 chars)"},
+                    },
+                    "required": ["account_id", "symbol", "side", "quantity", "market_price", "reason"],
+                },
+            ),
         ]
     
     # Handle tool calls
@@ -605,6 +757,8 @@ async def main():
             return await handle_simulate_order(arguments)
         elif name == "evaluate_risk":
             return await handle_evaluate_risk(arguments)
+        elif name == "request_approval":
+            return await handle_request_approval(arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
     

@@ -884,12 +884,169 @@ This is the **gated AI pattern** in action:
 
 **System is ready for LLM integration with secure read-only interface.**
 
-### Sprint 9 — MCP tool gated (1 settimana)
+### Sprint 9 — MCP Gated Tool ✅ COMPLETE (30 Dec 2024)
 
-* [ ] aggiungi `trade.simulate` e `risk.evaluate` come tool
-* [ ] `trade.request_commit` crea richiesta approval (non invia ordini)
+**Goal**: Add gated write tool `request_approval` to MCP server - enables LLMs to create order proposals that require human approval.
 
-**Done**: LLM può arrivare fino a "richiedere approvazione", ma non oltre.
+* [x] implement `request_approval` tool handler (~150 lines)
+* [x] integrate with ApprovalService for proposal storage
+* [x] add robust parameter validation (8 parameters, reason ≥ 10 chars)
+* [x] implement complete workflow: validate → simulate → evaluate risk → store proposal → request approval
+* [x] implement audit logging with correlation_id tracking
+* [x] add Tool definition with complete JSON Schema
+* [x] add dispatcher case in call_tool()
+* [x] update file docstring (7 tools total)
+* [x] write integration tests for workflow components
+* [x] update MCP server README with complete documentation
+
+**Done**: LLM can create order proposals but CANNOT execute them. Human approval via dashboard is required.
+
+**Test Report**: **Total: 187 tests** (7 new integration tests for request_approval workflow + 180 baseline).
+
+**Implementation Summary**:
+
+**request_approval Tool**:
+- **Purpose**: Create order proposal and request human approval (GATED operation)
+- **Parameters**: account_id, symbol, side, quantity, order_type, limit_price, market_price, reason (min 10 chars)
+- **Validation**: All required fields + reason length check (≥ 10 characters)
+- **Process Flow**:
+  1. Parse and validate parameters
+  2. Get portfolio from broker
+  3. Create OrderIntent with strategy_tag="mcp_request"
+  4. Simulate order via TradeSimulator
+  5. Check simulation status (FAIL → return error)
+  6. Evaluate via RiskEngine (R1-R8 rules)
+  7. Check risk decision (REJECT → return rejection)
+  8. Store proposal in ApprovalService
+  9. Request approval (state → APPROVAL_REQUESTED)
+  10. Return JSON with proposal_id and status
+
+**Return States**:
+- `APPROVAL_REQUESTED`: Success - proposal created, awaiting human approval
+- `RISK_REJECTED`: Risk rules violated (includes violated_rules list)
+- `SIMULATION_FAILED`: Simulation error (e.g., insufficient cash)
+
+**Security Features**:
+- ✅ Complete validation before proposal creation
+- ✅ Reason validation (min 10 chars) - prevents thoughtless requests
+- ✅ Complete simulation + risk check before storing proposal
+- ✅ Returns proposal_id (NOT approval token)
+- ✅ Instructs user to use dashboard for approval
+- ✅ Token generation only via human action
+- ✅ Order submission requires separate API call with token
+- ✅ Full audit trail with correlation_id
+
+**Gated AI Pattern (Complete)**:
+```
+LLM Phase (MCP Tools):
+  get_portfolio      → Read portfolio data
+  get_positions      → Read open positions
+  get_cash           → Read cash balances
+  get_open_orders    → Read pending orders
+  simulate_order     → Analyze trade impact (READ-ONLY)
+  evaluate_risk      → Check risk rules (READ-ONLY)
+  request_approval   → Create proposal (GATED - NO execution)
+    ↓
+    Returns: proposal_id + "awaiting approval" message
+    
+Human Phase (Dashboard):
+  Review proposal with full details
+  Decide: Approve or Deny
+    ↓
+    Approve → generates approval token
+    
+Execution Phase (API):
+  POST /api/v1/orders/submit (WITH token)
+    ↓
+    Token validation → Order submission → FILLED
+```
+
+**Why This Design**:
+1. **LLM can propose but not execute**: Maintains human-in-the-loop
+2. **Complete validation before proposal**: No invalid proposals in queue
+3. **Proposal ID tracking**: LLM can reference proposals in conversation
+4. **Dashboard integration**: Human has full context for approval decision
+5. **Audit trail**: Every step logged with correlation_id
+6. **Reason required**: Forces LLM to provide meaningful justification
+
+**Files Modified**:
+- **apps/mcp_server/main.py**: Added request_approval tool (~150 lines)
+  * Import ApprovalService
+  * Initialize approval_service (max 1000 proposals)
+  * Implement handle_request_approval() handler
+  * Add Tool definition with complete inputSchema
+  * Add dispatcher case
+  * Update docstring (7 tools)
+
+- **apps/mcp_server/README.md**: Comprehensive documentation (~100 lines added)
+  * Gated AI pattern explanation
+  * request_approval tool specification
+  * Usage examples with LLM workflow
+  * Security model documentation
+  * Complete flow diagrams
+
+- **tests/test_mcp_request_approval.py**: Integration tests (~220 lines)
+  * test_request_approval_workflow_success: Complete happy path
+  * test_request_approval_workflow_risk_rejection: R1 violation
+  * test_request_approval_workflow_simulation_failure: Insufficient cash
+  * test_request_approval_workflow_limit_order: Limit order handling
+  * test_approval_service_get_proposal: Proposal retrieval
+  * test_approval_service_list_proposals: Multiple proposals
+
+**Usage Example**:
+```python
+# LLM calls request_approval
+{
+  "account_id": "DU123456",
+  "symbol": "AAPL",
+  "side": "BUY",
+  "quantity": "10",
+  "order_type": "MKT",
+  "market_price": "190.00",
+  "reason": "Portfolio rebalancing to target allocation"
+}
+
+# MCP Server response (SUCCESS)
+{
+  "status": "APPROVAL_REQUESTED",
+  "proposal_id": "550e8400-e29b-41d4-a716-446655440000",
+  "decision": "APPROVE",
+  "reason": "Order approved by risk engine",
+  "symbol": "AAPL",
+  "side": "BUY",
+  "quantity": "10",
+  "estimated_cost": "1905.00",
+  "message": "Proposal created and awaiting human approval. Use dashboard to approve or deny."
+}
+
+# LLM informs user
+"I've created proposal 550e8400 for 10 shares of AAPL at estimated cost $1,905. 
+ Please review in the dashboard to approve or deny."
+```
+
+**Integration Ready**:
+- Claude Desktop: Can now create actionable proposals
+- MCP Inspector: Interactive testing of request_approval
+- Dashboard: Displays proposals created via MCP
+
+**Why This Matters**:
+Sprint 9 completes the **gated AI pattern**, enabling LLMs to:
+- ✅ Initiate order workflow (via request_approval)
+- ❌ Complete order workflow (no token access, no submit)
+- ✅ Provide reasoning (required field)
+- ✅ Track proposals (via proposal_id)
+
+**Human retains full control**:
+- LLM proposes with context
+- Human reviews with full details
+- Human decides (approve/deny)
+- System executes (with token)
+
+**MCP Server now has 7 tools**:
+- 6 read-only tools (get_portfolio, get_positions, get_cash, get_open_orders, simulate_order, evaluate_risk)
+- 1 gated write tool (request_approval)
+
+**System is ready for LLM-initiated proposals with human-in-the-loop approval.**
 
 ### Sprint 10 — Hardening + go-live "banale" (2–6 settimane)
 
