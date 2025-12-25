@@ -33,6 +33,7 @@ from mcp.types import Tool, TextContent
 from packages.audit_store import AuditStore, AuditEventCreate, EventType
 from packages.broker_ibkr.fake import FakeBrokerAdapter
 from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
+from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
 from packages.trade_sim import TradeSimulator, SimulationConfig
@@ -45,6 +46,7 @@ broker: Optional[FakeBrokerAdapter] = None
 simulator: Optional[TradeSimulator] = None
 risk_engine: Optional[RiskEngine] = None
 approval_service: Optional[ApprovalService] = None
+kill_switch: Optional[KillSwitch] = None
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -495,6 +497,16 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
     correlation_id = str(uuid.uuid4())
     
     try:
+        # Check kill switch first
+        if kill_switch and kill_switch.is_enabled():
+            result = {
+                "status": "KILL_SWITCH_ACTIVE",
+                "error": "Trading is currently halted - kill switch is active",
+                "proposal_id": None,
+            }
+            emit_audit_event("request_approval", correlation_id, arguments, result)
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        
         # Parse and validate parameters
         account_id = arguments.get("account_id")
         symbol = arguments.get("symbol")
@@ -602,10 +614,13 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
 
 async def main():
     """Main entry point for MCP server."""
-    global audit_store, broker, simulator, risk_engine, approval_service
+    global audit_store, broker, simulator, risk_engine, approval_service, kill_switch
     
     # Initialize services
     print("Initializing MCP server...")
+    
+    # Initialize kill switch first
+    kill_switch = get_kill_switch()
     
     audit_store = AuditStore("mcp_audit.db")
     

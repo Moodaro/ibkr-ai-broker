@@ -22,6 +22,7 @@ from packages.audit_store import (
 )
 from packages.broker_ibkr import Instrument, InstrumentType
 from packages.broker_ibkr.fake import FakeBrokerAdapter
+from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.order_submission import OrderSubmitter, OrderSubmissionError
 from packages.schemas import (
     ApprovalRequest,
@@ -75,11 +76,17 @@ broker: FakeBrokerAdapter | None = None
 # Global order submitter instance
 order_submitter: OrderSubmitter | None = None
 
+# Global kill switch instance
+kill_switch: KillSwitch | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan management."""
-    global audit_store, simulator, risk_engine, approval_service, broker, order_submitter
+    global audit_store, simulator, risk_engine, approval_service, broker, order_submitter, kill_switch
+    
+    # Initialize kill switch first (highest priority)
+    kill_switch = get_kill_switch()
     
     # Initialize audit store
     audit_store = AuditStore("data/audit.db")
@@ -206,6 +213,13 @@ async def propose_order(proposal: OrderProposal) -> OrderIntentResponse:
     Raises:
         HTTPException: If validation fails or audit store unavailable.
     """
+    # Check kill switch first
+    if kill_switch and kill_switch.is_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Trading is currently halted - kill switch is active",
+        )
+    
     if not audit_store:
         raise HTTPException(
             status_code=500,
@@ -833,3 +847,113 @@ async def submit_order(request: SubmitOrderRequest) -> SubmitOrderResponse:
         
         raise HTTPException(status_code=500, detail=f"Submission failed: {str(e)}")
 
+
+# Kill Switch Management Endpoints
+
+
+@app.get("/api/v1/kill-switch/status")
+async def get_kill_switch_status():
+    """
+    Get current kill switch status.
+    
+    Returns:
+        Kill switch state including enabled status, activation time, and reason.
+    """
+    if not kill_switch:
+        raise HTTPException(status_code=500, detail="Kill switch not initialized")
+    
+    state = kill_switch.get_state()
+    return {
+        "enabled": state.enabled,
+        "activated_at": state.activated_at.isoformat() if state.activated_at else None,
+        "activated_by": state.activated_by,
+        "reason": state.reason,
+    }
+
+
+@app.post("/api/v1/kill-switch/activate")
+async def activate_kill_switch(request: Request, reason: str = "Manual activation via API"):
+    """
+    Activate kill switch to halt all trading.
+    
+    Args:
+        reason: Reason for activation (optional)
+        
+    Returns:
+        Updated kill switch state.
+        
+    Raises:
+        HTTPException: If kill switch not initialized.
+    """
+    if not kill_switch or not audit_store:
+        raise HTTPException(status_code=500, detail="Services not initialized")
+    
+    correlation_id = get_correlation_id() or "no-correlation-id"
+    
+    # Activate kill switch
+    state = kill_switch.activate(activated_by="api", reason=reason)
+    
+    # Log to audit
+    event = AuditEventCreate(
+        event_type=EventType.CUSTOM,
+        correlation_id=correlation_id,
+        data={
+            "custom_event": "kill_switch_activated",
+            "reason": reason,
+            "activated_at": state.activated_at.isoformat() if state.activated_at else None,
+        },
+    )
+    audit_store.append_event(event)
+    
+    return {
+        "success": True,
+        "enabled": state.enabled,
+        "activated_at": state.activated_at.isoformat() if state.activated_at else None,
+        "activated_by": state.activated_by,
+        "reason": state.reason,
+        "message": "Kill switch activated - all trading operations are now blocked",
+    }
+
+
+@app.post("/api/v1/kill-switch/deactivate")
+async def deactivate_kill_switch(request: Request):
+    """
+    Deactivate kill switch to resume trading.
+    
+    WARNING: Only use after verifying system is safe to resume trading.
+    Cannot deactivate if KILL_SWITCH_ENABLED environment variable is set.
+    
+    Returns:
+        Updated kill switch state.
+        
+    Raises:
+        HTTPException: If kill switch not initialized or deactivation blocked by env var.
+    """
+    if not kill_switch or not audit_store:
+        raise HTTPException(status_code=500, detail="Services not initialized")
+    
+    correlation_id = get_correlation_id() or "no-correlation-id"
+    
+    try:
+        # Deactivate kill switch
+        state = kill_switch.deactivate(deactivated_by="api")
+        
+        # Log to audit
+        event = AuditEventCreate(
+            event_type=EventType.CUSTOM,
+            correlation_id=correlation_id,
+            data={
+                "custom_event": "kill_switch_deactivated",
+                "deactivated_at": state.activated_at.isoformat() if state.activated_at else None,
+            },
+        )
+        audit_store.append_event(event)
+        
+        return {
+            "success": True,
+            "enabled": state.enabled,
+            "message": "Kill switch deactivated - trading operations resumed",
+        }
+    
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
