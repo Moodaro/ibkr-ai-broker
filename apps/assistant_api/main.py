@@ -7,7 +7,7 @@ risk evaluation, and approval management.
 import time
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -23,6 +23,7 @@ from packages.statistics import get_stats_collector, PreLiveStatus
 from packages.safety_checks import get_safety_checker
 from packages.live_config import get_live_config_manager, is_live_trading_enabled
 from packages.live_order_validator import get_live_order_validator
+from packages.trade_journal import get_trade_journal, TradeStatus
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -1542,3 +1543,140 @@ async def disable_live_trading():
             status_code=500,
             detail=f"Failed to disable live trading: {e}"
         )
+
+# ===========================
+# Trade Journal Endpoints
+# ===========================
+
+
+@app.get("/api/v1/trades/history")
+async def get_trade_history(
+    symbol: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    """Get trade history with optional filters."""
+    try:
+        from datetime import datetime
+        
+        trade_status = TradeStatus(status) if status else None
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
+        
+        limit = min(limit, 1000)
+        
+        journal = get_trade_journal()
+        trades = journal.get_trades(
+            symbol=symbol,
+            status=trade_status,
+            start_date=start_dt,
+            end_date=end_dt,
+            limit=limit,
+            offset=offset
+        )
+        
+        logger.info("trade_history_retrieved", count=len(trades), symbol=symbol, status=status)
+        
+        return {
+            "trades": [t.to_dict() for t in trades],
+            "count": len(trades),
+            "limit": limit,
+            "offset": offset
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid parameter: {e}")
+    except Exception as e:
+        logger.error("trade_history_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve trade history: {e}")
+
+
+@app.get("/api/v1/trades/{trade_id}")
+async def get_trade_by_id(trade_id: int):
+    """Get single trade by ID."""
+    try:
+        journal = get_trade_journal()
+        trade = journal.get_trade(trade_id)
+        
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+        
+        logger.info("trade_retrieved", trade_id=trade_id)
+        return trade.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("trade_retrieval_failed", trade_id=trade_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve trade: {e}")
+
+
+@app.get("/api/v1/trades/stats")
+async def get_trade_stats(
+    symbol: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """Get aggregate trade statistics."""
+    try:
+        from datetime import datetime
+        
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
+        
+        journal = get_trade_journal()
+        stats = journal.get_stats(symbol=symbol, start_date=start_dt, end_date=end_dt)
+        
+        logger.info("trade_stats_calculated", total_trades=stats.total_trades, total_pnl=str(stats.total_pnl), win_rate=stats.win_rate)
+        return stats.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid parameter: {e}")
+    except Exception as e:
+        logger.error("trade_stats_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to calculate trade stats: {e}")
+
+
+@app.get("/api/v1/trades/export")
+async def export_trade_history(
+    symbol: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    format: str = "csv"
+):
+    """Export trade history to file."""
+    try:
+        from datetime import datetime
+        import json
+        from pathlib import Path
+        
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
+        
+        journal = get_trade_journal()
+        
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        symbol_part = f"_{symbol}" if symbol else ""
+        filename = f"data/exports/trades{symbol_part}_{timestamp}.{format}"
+        
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
+        
+        if format == "csv":
+            count = journal.export_csv(filename, symbol=symbol, start_date=start_dt, end_date=end_dt)
+        elif format == "json":
+            trades = journal.get_trades(symbol=symbol, start_date=start_dt, end_date=end_dt, limit=100000)
+            with open(filename, "w") as f:
+                json.dump([t.to_dict() for t in trades], f, indent=2)
+            count = len(trades)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
+        
+        logger.info("trade_history_exported", filename=filename, count=count)
+        return {"message": "Trade history exported successfully", "filename": filename, "count": count, "format": format}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid parameter: {e}")
+    except Exception as e:
+        logger.error("trade_export_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to export trade history: {e}")
