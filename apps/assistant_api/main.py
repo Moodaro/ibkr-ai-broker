@@ -21,6 +21,8 @@ from packages.feature_flags import get_feature_flags
 from packages.reconciliation import get_reconciler
 from packages.statistics import get_stats_collector, PreLiveStatus
 from packages.safety_checks import get_safety_checker
+from packages.live_config import get_live_config_manager, is_live_trading_enabled
+from packages.live_order_validator import get_live_order_validator
 from packages.audit_store import (
     AuditEventCreate,
     AuditStore,
@@ -1397,4 +1399,146 @@ async def get_safety_checks():
         raise HTTPException(
             status_code=500,
             detail=f"Safety checks failed: {e}"
+        )
+
+@app.get("/api/v1/live-trading/status")
+async def get_live_trading_status():
+    """
+    Get live trading configuration and status.
+    
+    Returns current live trading settings:
+    - enabled: Whether live trading is active
+    - max_order_size: Maximum order quantity
+    - max_order_value_usd: Maximum order value
+    - symbol_whitelist: Allowed symbols
+    - require_safety_checks: Safety checks required
+    - require_manual_approval: Manual approval required
+    
+    Returns:
+        Live trading configuration dictionary
+    """
+    try:
+        validator = get_live_order_validator()
+        config_summary = validator.get_validation_summary()
+        
+        logger.info(
+            "live_trading_status_checked",
+            live_enabled=config_summary["live_enabled"]
+        )
+        
+        return config_summary
+        
+    except Exception as e:
+        logger.error("live_trading_status_failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get live trading status: {e}"
+        )
+
+
+@app.post("/api/v1/live-trading/enable")
+async def enable_live_trading():
+    """
+    Enable live trading mode.
+    
+    Validates system readiness before enabling:
+    - Runs safety checks
+    - Verifies pre-live checklist
+    - Enables live_trading_mode feature flag
+    
+    Returns:
+        Success message and new status
+    
+    Raises:
+        HTTPException: If system not ready for live trading
+    """
+    try:
+        # Run safety checks
+        safety_checker = get_safety_checker()
+        safety_result = safety_checker.run_all_checks()
+        
+        if not safety_result.ready_for_live:
+            logger.error(
+                "live_trading_enable_failed",
+                reason="safety_checks_failed",
+                blocking_issues=safety_result.blocking_issues
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "System not ready for live trading",
+                    "blocking_issues": safety_result.blocking_issues,
+                    "warnings": safety_result.warnings
+                }
+            )
+        
+        # Check pre-live statistics
+        stats = get_stats_collector()
+        pre_live_status = stats.get_pre_live_status()
+        
+        if not pre_live_status.ready_for_live:
+            logger.error(
+                "live_trading_enable_failed",
+                reason="pre_live_checklist_failed",
+                blocking_issues=pre_live_status.blocking_issues
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Pre-live checklist not passed",
+                    "blocking_issues": pre_live_status.blocking_issues
+                }
+            )
+        
+        # Enable live trading via feature flag
+        flags = get_feature_flags()
+        flags.set_flag("live_trading_mode", True)
+        
+        logger.info("live_trading_enabled")
+        
+        return {
+            "message": "Live trading enabled successfully",
+            "live_enabled": True,
+            "safety_checks_passed": safety_result.checks_passed,
+            "pre_live_checks_passed": pre_live_status.checks_passed
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("live_trading_enable_error", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enable live trading: {e}"
+        )
+
+
+@app.post("/api/v1/live-trading/disable")
+async def disable_live_trading():
+    """
+    Disable live trading mode.
+    
+    Immediately disables live trading by turning off feature flag.
+    All subsequent orders will use paper trading adapter.
+    
+    Returns:
+        Success message and new status
+    """
+    try:
+        # Disable live trading via feature flag
+        flags = get_feature_flags()
+        flags.set_flag("live_trading_mode", False)
+        
+        logger.info("live_trading_disabled")
+        
+        return {
+            "message": "Live trading disabled successfully",
+            "live_enabled": False
+        }
+        
+    except Exception as e:
+        logger.error("live_trading_disable_error", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to disable live trading: {e}"
         )
