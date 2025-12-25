@@ -884,14 +884,6 @@ This is the **gated AI pattern** in action:
 
 **System is ready for LLM integration with secure read-only interface.**
 
-### Sprint 8 — MCP server (read-only) (1 settimana)
-
-* [ ] MCP server espone tool read-only
-* [ ] limiti parametri, rate limit
-* [ ] audit ogni tool call
-
-**Done**: host LLM può leggere portafoglio senza possibilità di trade.
-
 ### Sprint 9 — MCP tool gated (1 settimana)
 
 * [ ] aggiungi `trade.simulate` e `risk.evaluate` come tool
