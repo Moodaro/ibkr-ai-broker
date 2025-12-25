@@ -31,7 +31,8 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from packages.audit_store import AuditStore, AuditEventCreate, EventType
-from packages.broker_ibkr.fake import FakeBrokerAdapter
+from packages.broker_ibkr import BrokerAdapter
+from packages.broker_ibkr.factory import get_broker_adapter
 from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
@@ -44,7 +45,7 @@ from packages.approval_service import ApprovalService
 
 # Global services (initialized on startup)
 audit_store: Optional[AuditStore] = None
-broker: Optional[FakeBrokerAdapter] = None
+broker: Optional[BrokerAdapter] = None
 simulator: Optional[TradeSimulator] = None
 risk_engine: Optional[RiskEngine] = None
 approval_service: Optional[ApprovalService] = None
@@ -944,8 +945,7 @@ async def main():
     
     audit_store = AuditStore("mcp_audit.db")
     
-    broker = FakeBrokerAdapter(account_id="DU123456")
-    broker.connect()
+    broker = get_broker_adapter()
     
     simulator = TradeSimulator(config=SimulationConfig())
     

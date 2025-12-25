@@ -120,6 +120,12 @@ class TestMarketDataAPIEndpoints:
     def client(self):
         """Create test client."""
         from apps.assistant_api.main import app
+        from apps.assistant_api import main
+        from packages.broker_ibkr.factory import get_broker_adapter
+        
+        # Initialize broker for API endpoints
+        main.broker = get_broker_adapter()
+        
         return TestClient(app)
     
     def test_get_market_snapshot_success(self, client):

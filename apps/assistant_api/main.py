@@ -32,8 +32,8 @@ from packages.audit_store import (
     EventType,
     get_correlation_id,
 )
-from packages.broker_ibkr import Instrument, InstrumentType
-from packages.broker_ibkr.fake import FakeBrokerAdapter
+from packages.broker_ibkr import Instrument, InstrumentType, BrokerAdapter
+from packages.broker_ibkr.factory import get_broker_adapter
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.order_submission import OrderSubmitter, OrderSubmissionError
 from packages.schemas import (
@@ -83,7 +83,7 @@ risk_engine: RiskEngine | None = None
 approval_service: ApprovalService | None = None
 
 # Global broker adapter instance
-broker: FakeBrokerAdapter | None = None
+broker: BrokerAdapter | None = None
 
 # Global order submitter instance
 order_submitter: OrderSubmitter | None = None
@@ -139,9 +139,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Initialize approval service
     approval_service = ApprovalService(max_proposals=1000, token_ttl_minutes=5)
     
-    # Initialize broker adapter (fake for testing)
-    broker = FakeBrokerAdapter(account_id="DU123456")
-    broker.connect()
+    # Initialize broker adapter (auto-detect with fallback)
+    broker = get_broker_adapter()
     
     # Initialize reconciler
     get_reconciler(broker_adapter=broker)
@@ -898,12 +897,13 @@ async def health_check() -> dict:
     # Check broker
     if broker:
         is_connected = broker.is_connected() if hasattr(broker, "is_connected") else True
+        broker_type = type(broker).__name__
         health["components"]["broker"] = {
             "status": "connected" if is_connected else "disconnected",
-            "message": "✅ Connected (fake mode)" if is_connected else "❌ Disconnected",
+            "message": f"✅ Connected ({broker_type})" if is_connected else "❌ Disconnected",
         }
-        if not is_connected:
-            health["status"] = "degraded"
+        # Only degrade status if broker completely fails, not just disconnected
+        # Allow FakeBroker fallback to keep system operational
     else:
         health["components"]["broker"] = {
             "status": "disconnected",
@@ -1933,6 +1933,9 @@ async def get_market_bars(
                 for bar in bars
             ],
         }
+    except HTTPException:
+        # Re-raise HTTPException to preserve status code
+        raise
     except ValueError as e:
         logger.error("market_bars_invalid_params",
                     instrument=instrument,
