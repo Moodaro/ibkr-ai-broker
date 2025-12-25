@@ -67,6 +67,7 @@ class Instrument(BaseModel):
 
     type: InstrumentType
     symbol: str
+    con_id: Optional[int] = None  # IBKR contract ID
     exchange: Optional[str] = None
     currency: str = "USD"
     description: Optional[str] = None
@@ -116,6 +117,7 @@ class Account(BaseModel):
 
     account_id: str
     account_type: str  # e.g., "PAPER", "LIVE"
+    status: str = "active"  # Status of account
     currency: str = "USD"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

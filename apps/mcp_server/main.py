@@ -36,7 +36,7 @@ from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
-from packages.schemas.market_data import MarketSnapshotV2, MarketBar, TimeframeType
+from packages.schemas.market_data import MarketSnapshot, MarketBar, TimeframeType
 from packages.structured_logging import get_logger, setup_logging
 from packages.trade_sim import TradeSimulator, SimulationConfig
 from packages.approval_service import ApprovalService
