@@ -77,6 +77,12 @@ logs/
 # Audit files (keep structure, ignore data)
 audit_events/*.json
 
+# Data directory (runtime files)
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.log
+
 # Temp files
 tmp/
 temp/

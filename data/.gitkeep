@@ -1,0 +1,7 @@
+# Data directory
+
+This directory contains runtime data files:
+- `audit.db` - SQLite audit event store
+- `*.log` - Application logs
+
+**DO NOT commit** files in this directory to version control.

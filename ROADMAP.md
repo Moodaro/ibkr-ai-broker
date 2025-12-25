@@ -609,14 +609,14 @@ Mitigazioni:
 
 **Done**: endpoint `/portfolio` mostra dati paper reali; audit per ogni fetch.
 
-### Sprint 3 — Schemi ordini + proposta strutturata (1 settimana)
+### Sprint 3 — Schemi ordini + proposta strutturata (1 settimana) ✅ COMPLETATO
 
-* [ ] JSON Schema OrderIntent + Pydantic
-* [ ] endpoint `POST /propose` che genera OrderIntent (mock LLM iniziale)
-* [ ] validazione schema + error handling
-* [ ] audit `OrderProposed`
+* [x] JSON Schema OrderIntent + Pydantic
+* [x] endpoint `POST /propose` che genera OrderIntent (mock LLM iniziale)
+* [x] validazione schema + error handling
+* [x] audit `OrderProposed`
 
-**Done**: OrderIntent validato end-to-end.
+**Done**: OrderIntent validato end-to-end. 77 test passano (31 nuovi). FastAPI endpoint con audit integration completa.
 
 ### Sprint 4 — Simulatore v1 (1 settimana)
 
