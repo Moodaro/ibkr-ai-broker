@@ -182,3 +182,32 @@ class OrderIntentResponse(BaseModel):
     validation_passed: bool = True
     warnings: list[str] = Field(default_factory=list)
     correlation_id: str
+
+class SimulationRequest(BaseModel):
+    """Request model for order simulation."""
+
+    intent: OrderIntent = Field(
+        ...,
+        description="Validated order intent to simulate",
+    )
+    market_price: Decimal = Field(
+        ...,
+        description="Current market price for the instrument",
+        gt=Decimal("0"),
+    )
+    portfolio_snapshot: Optional[dict] = Field(
+        default=None,
+        description="Optional portfolio snapshot for simulation context",
+    )
+
+    model_config = {"frozen": True}
+
+
+class SimulationResponse(BaseModel):
+    """Response model for order simulation."""
+
+    result: dict = Field(
+        ...,
+        description="Simulation result with execution estimates",
+    )
+    correlation_id: str

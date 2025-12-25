@@ -618,14 +618,20 @@ Mitigazioni:
 
 **Done**: OrderIntent validato end-to-end. 77 test passano (31 nuovi). FastAPI endpoint con audit integration completa.
 
-### Sprint 4 — Simulatore v1 (1 settimana)
+### Sprint 4 — Simulatore v1 ✅ COMPLETE (25 Dec 2025)
 
-* [ ] trade_sim: calcolo notional, cash_after, exposure_after
-* [ ] slippage/fee semplice
-* [ ] test con casi noti
-* [ ] endpoint `POST /simulate`
+* [x] trade_sim: calcolo notional, cash_after, exposure_after
+* [x] slippage/fee semplice (base + market impact)
+* [x] test con casi noti (21 comprehensive tests)
+* [x] endpoint `POST /simulate`
+* [x] SimulationConfig (fee $0.005/share, min $1, max 1%, slippage 5bps base)
+* [x] SimulationResult con warnings e error handling
+* [x] Constraint validation (max_slippage_bps, max_notional)
+* [x] Deterministic calculations (same input = same output)
 
-**Done**: sim deterministica, ripetibile, audit `OrderSimulated`.
+**Done**: Sim deterministica, ripetibile, audit `OrderSimulated`. **106 tests passing**.
+
+**Test Report**: [docs/sprint-4-test-report.md](docs/sprint-4-test-report.md)
 
 ### Sprint 5 — Risk Engine v1 (1 settimana)
 

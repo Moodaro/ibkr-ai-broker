@@ -8,6 +8,8 @@ from .order_intent import (
     OrderIntent,
     OrderIntentResponse,
     OrderProposal,
+    SimulationRequest,
+    SimulationResponse,
 )
 
 __all__ = [
@@ -15,4 +17,6 @@ __all__ = [
     "OrderIntent",
     "OrderIntentResponse",
     "OrderProposal",
+    "SimulationRequest",
+    "SimulationResponse",
 ]

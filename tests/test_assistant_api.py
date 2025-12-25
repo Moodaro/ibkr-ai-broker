@@ -19,9 +19,12 @@ def audit_store(tmp_path):
 @pytest.fixture
 def client(audit_store):
     """Create test client with initialized audit store."""
-    # Inject audit store into app
+    # Inject audit store and simulator into app
     from apps.assistant_api import main
+    from packages.trade_sim import SimulationConfig, TradeSimulator
+    
     main.audit_store = audit_store
+    main.simulator = TradeSimulator(config=SimulationConfig())
     
     return TestClient(app)
 
@@ -308,6 +311,294 @@ class TestProposeEndpoint:
         }
         
         response = client.post("/api/v1/propose", json=proposal)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "correlation_id" in data
+        assert len(data["correlation_id"]) > 0
+
+
+class TestSimulateEndpoint:
+    """Test /simulate endpoint."""
+
+    def test_simulate_buy_market_order(self, client):
+        """Test simulation of a buy market order."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderIntent
+        
+        # First create a valid intent
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="AAPL",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("100"),
+            order_type=OrderType.MKT,
+            reason="Buy 100 shares of AAPL at market",
+            strategy_tag="test",
+        )
+        
+        # Simulate with market price
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "150.00",
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "result" in data
+        assert "correlation_id" in data
+        
+        result = data["result"]
+        assert result["status"] == "SUCCESS"
+        assert Decimal(result["execution_price"]) == Decimal("150.00")
+        assert Decimal(result["gross_notional"]) == Decimal("15000.00")
+        assert Decimal(result["estimated_fee"]) > 0
+        assert Decimal(result["cash_after"]) < Decimal(result["cash_before"])
+    
+    def test_simulate_sell_limit_order(self, client):
+        """Test simulation of a sell limit order."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderIntent
+        
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="TSLA",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.SELL,
+            quantity=Decimal("50"),
+            order_type=OrderType.LMT,
+            limit_price=Decimal("250.00"),
+            reason="Sell 50 TSLA at limit",
+            strategy_tag="test",
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "245.00",
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 200
+        data = response.json()
+        result = data["result"]
+        
+        assert result["status"] == "SUCCESS"
+        assert Decimal(result["execution_price"]) == Decimal("250.00")  # Limit price
+        assert Decimal(result["estimated_slippage"]) == 0  # No slippage for limit orders
+        assert Decimal(result["cash_after"]) > Decimal(result["cash_before"])  # Cash increases on sell
+    
+    def test_simulate_insufficient_cash(self, client):
+        """Test simulation with insufficient cash."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderIntent
+        
+        # Large order that exceeds default portfolio cash
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="AMZN",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("1000"),
+            order_type=OrderType.MKT,
+            reason="Large buy order",
+            strategy_tag="test",
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "150.00",  # 150k total
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 200
+        data = response.json()
+        result = data["result"]
+        
+        assert result["status"] == "INSUFFICIENT_CASH"
+        assert result["error_message"] is not None
+        assert "Insufficient cash" in result["error_message"]
+    
+    def test_simulate_with_constraints(self, client):
+        """Test simulation with order constraints."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderConstraints, OrderIntent
+        
+        constraints = OrderConstraints(
+            max_slippage_bps=10,  # 0.1% max slippage
+            max_notional=Decimal("10000.00"),
+        )
+        
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="NVDA",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("20"),
+            order_type=OrderType.MKT,
+            reason="Buy with constraints",
+            strategy_tag="test",
+            constraints=constraints,
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "450.00",
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 200
+        data = response.json()
+        result = data["result"]
+        
+        # Should succeed as notional is 9000 < 10000
+        assert result["status"] == "SUCCESS"
+    
+    def test_simulate_constraint_violated(self, client):
+        """Test simulation with violated constraints."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderConstraints, OrderIntent
+        
+        constraints = OrderConstraints(
+            max_notional=Decimal("5000.00"),  # Low limit
+        )
+        
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="GOOG",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("100"),
+            order_type=OrderType.MKT,
+            reason="Buy exceeding max notional",
+            strategy_tag="test",
+            constraints=constraints,
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "100.00",  # 10k notional
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 200
+        data = response.json()
+        result = data["result"]
+        
+        assert result["status"] == "CONSTRAINT_VIOLATED"
+        assert result["error_message"] is not None
+        assert "max" in result["error_message"].lower()  # Check for "max" in error message
+    
+    def test_simulate_missing_market_price_fails(self, client):
+        """Test simulation fails without market price."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderIntent
+        
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="MSFT",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("50"),
+            order_type=OrderType.MKT,
+            reason="Test market order execution",
+            strategy_tag="test",
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            # Missing market_price
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 422  # Validation error
+    
+    def test_simulate_negative_market_price_fails(self, client):
+        """Test simulation fails with negative market price."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderIntent
+        
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="FB",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("25"),
+            order_type=OrderType.MKT,
+            reason="Test market order validation",
+            strategy_tag="test",
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "-100.00",
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
+        
+        assert response.status_code == 422  # Validation error
+    
+    def test_simulate_correlation_id_in_response(self, client):
+        """Test that correlation_id is included in simulation response."""
+        from packages.broker_ibkr import Instrument, InstrumentType, OrderSide, OrderType
+        from packages.schemas import OrderIntent
+        
+        intent = OrderIntent(
+            account_id="DU123456",
+            instrument=Instrument(
+                type=InstrumentType.STK,
+                symbol="AMD",
+                exchange="SMART",
+                currency="USD",
+            ),
+            side=OrderSide.BUY,
+            quantity=Decimal("10"),
+            order_type=OrderType.MKT,
+            reason="Test correlation ID",
+            strategy_tag="test",
+        )
+        
+        request = {
+            "intent": intent.model_dump(mode="json"),
+            "market_price": "120.00",
+        }
+        
+        response = client.post("/api/v1/simulate", json=request)
         
         assert response.status_code == 200
         data = response.json()

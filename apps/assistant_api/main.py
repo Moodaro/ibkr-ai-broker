@@ -5,6 +5,7 @@ risk evaluation, and approval management.
 """
 
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
@@ -23,19 +24,32 @@ from packages.schemas import (
     OrderIntent,
     OrderIntentResponse,
     OrderProposal,
+    SimulationRequest,
+    SimulationResponse,
+)
+from packages.trade_sim import (
+    SimulationConfig,
+    SimulationResult,
+    TradeSimulator,
 )
 
 # Global audit store instance
 audit_store: AuditStore | None = None
 
+# Global simulator instance
+simulator: TradeSimulator | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan management."""
-    global audit_store
+    global audit_store, simulator
     
     # Initialize audit store
     audit_store = AuditStore("data/audit.db")
+    
+    # Initialize simulator with default config
+    simulator = TradeSimulator(config=SimulationConfig())
     
     yield
     
@@ -229,6 +243,103 @@ async def propose_order(proposal: OrderProposal) -> OrderIntentResponse:
             status_code=500,
             detail=f"Failed to create order intent: {str(e)}",
         )
+
+
+@app.post("/api/v1/simulate", response_model=SimulationResponse)
+async def simulate_order(request: SimulationRequest) -> SimulationResponse:
+    """
+    Simulate an order execution.
+
+    This endpoint accepts a validated OrderIntent and market price,
+    simulates the execution using the TradeSimulator, and returns
+    detailed cost and impact estimates.
+
+    Args:
+        request: Simulation request with intent and market price.
+
+    Returns:
+        SimulationResult with execution estimates.
+
+    Raises:
+        HTTPException: If simulation fails or services unavailable.
+    """
+    if not audit_store:
+        raise HTTPException(
+            status_code=500,
+            detail="Audit store not initialized",
+        )
+    
+    if not simulator:
+        raise HTTPException(
+            status_code=500,
+            detail="Simulator not initialized",
+        )
+    
+    correlation_id = get_correlation_id() or "no-correlation-id"
+    
+    try:
+        # Create minimal portfolio for simulation
+        # In production, fetch from broker adapter
+        from packages.broker_ibkr import Cash, Portfolio
+        
+        portfolio = Portfolio(
+            account_id=request.intent.account_id,
+            cash=[
+                Cash(
+                    currency="USD",
+                    total=Decimal("100000.00"),  # Placeholder cash
+                    available=Decimal("100000.00"),
+                )
+            ],
+            positions=[],  # Empty positions for now
+            total_value=Decimal("100000.00"),
+        )
+        
+        # Run simulation
+        result = simulator.simulate(
+            intent=request.intent,
+            portfolio=portfolio,
+            market_price=request.market_price,
+        )
+        
+        # Emit audit event (use mode='json' to convert Decimals to strings)
+        event = AuditEventCreate(
+            event_type=EventType.ORDER_SIMULATED,
+            correlation_id=correlation_id,
+            data={
+                "intent": request.intent.model_dump(mode="json"),
+                "market_price": str(request.market_price),
+                "result": result.model_dump(mode="json"),
+            },
+        )
+        audit_store.append_event(event)
+        
+        return SimulationResponse(
+            result=result.model_dump(),
+            correlation_id=correlation_id,
+        )
+    
+    except ValidationError as e:
+        # Re-raise for exception handler
+        raise
+    except Exception as e:
+        # Emit audit event for unexpected errors
+        event = AuditEventCreate(
+            event_type=EventType.ERROR_OCCURRED,
+            correlation_id=correlation_id,
+            data={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "request": request.model_dump(),
+            },
+        )
+        audit_store.append_event(event)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Simulation failed: {str(e)}",
+        )
+
 
 
 @app.get("/api/v1/health")
