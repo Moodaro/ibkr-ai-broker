@@ -1067,6 +1067,148 @@ async def submit_order(request: SubmitOrderRequest) -> SubmitOrderResponse:
         raise HTTPException(status_code=500, detail=f"Submission failed: {str(e)}")
 
 
+@app.post("/api/v1/orders/cancel/{approval_id}", response_model=dict)
+async def cancel_order(approval_id: str, request: dict) -> dict:
+    """
+    Execute order cancellation after approval.
+    
+    Validates approval action (grant/deny), resolves order ID (proposal_id or broker_order_id),
+    calls broker.cancel_order(), emits audit events, and returns execution result.
+    
+    Args:
+        approval_id: Cancel approval identifier
+        request: Action (grant/deny) + optional notes
+        
+    Returns:
+        CancelExecutionResponse with status (CANCELLED/DENIED/FAILED)
+        
+    Raises:
+        HTTPException: If services not initialized or cancellation fails
+    """
+    if not broker_adapter:
+        raise HTTPException(status_code=500, detail="Broker adapter not initialized")
+    if not audit_store:
+        raise HTTPException(status_code=500, detail="Audit store not initialized")
+    if not approval_service:
+        raise HTTPException(status_code=500, detail="Approval service not initialized")
+    
+    correlation_id = get_correlation_id() or "no-correlation-id"
+    
+    try:
+        from datetime import datetime, timezone
+        from packages.schemas.order_cancel import CancelExecutionRequest, CancelExecutionResponse
+        
+        # Parse request
+        exec_request = CancelExecutionRequest(**request)
+        action = exec_request.action
+        notes = exec_request.notes or ""
+        
+        # Emit approval event
+        if action == "grant":
+            event = AuditEventCreate(
+                event_type=EventType.ORDER_CANCEL_APPROVED,
+                correlation_id=correlation_id,
+                data={
+                    "approval_id": approval_id,
+                    "notes": notes,
+                },
+            )
+        else:
+            event = AuditEventCreate(
+                event_type=EventType.ORDER_CANCEL_DENIED,
+                correlation_id=correlation_id,
+                data={
+                    "approval_id": approval_id,
+                    "notes": notes,
+                },
+            )
+        audit_store.append_event(event)
+        
+        # If denied, return immediately
+        if action == "deny":
+            return CancelExecutionResponse(
+                status="DENIED",
+                message=f"Cancel request {approval_id} denied by user",
+                cancelled_at=None,
+                error=None,
+            ).model_dump()
+        
+        # TODO: Retrieve cancel intent from approval_service or database
+        # For now, extract broker_order_id from approval_id metadata
+        # In production, this should lookup the stored cancel intent
+        
+        # Parse approval_id format: "cancel_{uuid}"
+        # This is a simplified implementation - production should store and retrieve intent
+        if not approval_id.startswith("cancel_"):
+            raise ValueError(f"Invalid cancel approval_id format: {approval_id}")
+        
+        # For this implementation, we require broker_order_id in request
+        broker_order_id = request.get("broker_order_id")
+        if not broker_order_id:
+            raise ValueError("broker_order_id must be provided in request")
+        
+        # Execute cancellation
+        try:
+            success = broker_adapter.cancel_order(broker_order_id)
+            
+            if success:
+                # Emit success event
+                event = AuditEventCreate(
+                    event_type=EventType.ORDER_CANCEL_EXECUTED,
+                    correlation_id=correlation_id,
+                    data={
+                        "approval_id": approval_id,
+                        "broker_order_id": broker_order_id,
+                    },
+                )
+                audit_store.append_event(event)
+                
+                return CancelExecutionResponse(
+                    status="CANCELLED",
+                    message=f"Order {broker_order_id} cancelled successfully",
+                    cancelled_at=datetime.now(timezone.utc),
+                    error=None,
+                ).model_dump()
+            else:
+                raise ValueError("Broker returned failure")
+                
+        except Exception as e:
+            # Emit failure event
+            event = AuditEventCreate(
+                event_type=EventType.ORDER_CANCEL_FAILED,
+                correlation_id=correlation_id,
+                data={
+                    "approval_id": approval_id,
+                    "broker_order_id": broker_order_id,
+                    "error": str(e),
+                },
+            )
+            audit_store.append_event(event)
+            
+            return CancelExecutionResponse(
+                status="FAILED",
+                message=f"Cancel failed for order {broker_order_id}",
+                cancelled_at=None,
+                error=str(e),
+            ).model_dump()
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        event = AuditEventCreate(
+            event_type=EventType.ERROR_OCCURRED,
+            correlation_id=correlation_id,
+            data={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "approval_id": approval_id,
+            },
+        )
+        audit_store.append_event(event)
+        
+        raise HTTPException(status_code=500, detail=f"Cancel execution failed: {str(e)}")
+
+
 # Kill Switch Management Endpoints
 
 
