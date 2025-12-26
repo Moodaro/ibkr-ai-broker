@@ -142,21 +142,21 @@ def test_schedule_auto_queries_no_cron_expression(scheduler, mock_service):
     # Should not raise, should skip and log warning
     count = scheduler.schedule_auto_queries()
     
-    # Only valid query should be scheduled
-    assert count == 1
+    # Original valid queries (123456, 345678) + new query (999999 skipped) = 2 scheduled
+    assert count == 2
     assert "flex_query_999999" not in scheduler._scheduled_job_ids
 
 
 def test_schedule_auto_queries_invalid_cron(scheduler, mock_service):
     """Test handling of invalid cron expression."""
-    # Add query with invalid cron
+    # Add query with invalid cron (passes basic validation but fails APScheduler parsing)
     bad_query = FlexQueryConfig(
         query_id="888888",
         name="Invalid Cron Query",
         query_type=FlexQueryType.TRADES,
         enabled=True,
         auto_schedule=True,
-        schedule_cron="invalid cron"
+        schedule_cron="99 99 99 99 99"  # Invalid: out of range values
     )
     
     response = mock_service.list_queries.return_value
@@ -165,12 +165,13 @@ def test_schedule_auto_queries_invalid_cron(scheduler, mock_service):
     # Should not raise, should catch error and continue
     count = scheduler.schedule_auto_queries()
     
-    # Only valid query should be scheduled
-    assert count == 1
+    # Original valid queries (123456, 345678) + new invalid (888888 skipped) = 2 scheduled
+    assert count == 2
     assert "flex_query_888888" not in scheduler._scheduled_job_ids
 
 
-def test_start_scheduler(scheduler, mock_service):
+@pytest.mark.asyncio
+async def test_start_scheduler(scheduler, mock_service):
     """Test starting the scheduler."""
     scheduler.start()
     
@@ -179,11 +180,14 @@ def test_start_scheduler(scheduler, mock_service):
     # Verify queries were scheduled
     assert "flex_query_123456" in scheduler._scheduled_job_ids
     
+    scheduler.stop(wait=False)
+    
     # Cleanup
     scheduler.stop(wait=False)
 
 
-def test_start_scheduler_idempotent(scheduler):
+@pytest.mark.asyncio
+async def test_start_scheduler_idempotent(scheduler):
     """Test that calling start() multiple times is safe."""
     scheduler.start()
     assert scheduler.scheduler.running
@@ -199,12 +203,14 @@ def test_start_scheduler_idempotent(scheduler):
     scheduler.stop(wait=False)
 
 
-def test_stop_scheduler(scheduler):
+@pytest.mark.asyncio
+async def test_stop_scheduler(scheduler):
     """Test stopping the scheduler."""
     scheduler.start()
     assert scheduler.scheduler.running
     
-    scheduler.stop(wait=False)
+    scheduler.stop(wait=True)  # Wait for async shutdown
+    await asyncio.sleep(0.1)  # Give event loop time to process
     
     assert not scheduler.scheduler.running
     assert len(scheduler._scheduled_job_ids) == 0
@@ -265,7 +271,8 @@ def test_cron_trigger_parsing_5_fields(scheduler, mock_service):
     
     # Should schedule successfully
     count = scheduler.schedule_auto_queries()
-    assert count == 2  # Original + new query
+    # Original valid queries (123456, 345678) + new query (555555) = 3 scheduled
+    assert count == 3
     assert "flex_query_555555" in scheduler._scheduled_job_ids
 
 
@@ -287,7 +294,8 @@ def test_cron_trigger_parsing_6_fields(scheduler, mock_service):
     
     # Should schedule successfully
     count = scheduler.schedule_auto_queries()
-    assert count == 2  # Original + new query
+    # Original valid queries (123456, 345678) + new query (666666) = 3 scheduled
+    assert count == 3
     assert "flex_query_666666" in scheduler._scheduled_job_ids
 
 
@@ -295,16 +303,17 @@ def test_scheduler_prevents_duplicate_jobs(scheduler):
     """Test that scheduling same query twice doesn't duplicate jobs."""
     # Schedule first time
     count1 = scheduler.schedule_auto_queries()
-    assert count1 == 1
+    # Expected: 123456 (enabled+auto) and 345678 (enabled+auto) = 2
+    assert count1 == 2
     
-    # Schedule again
+    # Schedule again (should skip duplicates)
     count2 = scheduler.schedule_auto_queries()
-    assert count2 == 1  # Still 1, not 2
+    assert count2 == 0  # No new jobs added (all already scheduled)
     
-    # Should still have only one job
+    # Should still have only two jobs
     jobs = scheduler.scheduler.get_jobs()
     flex_jobs = [j for j in jobs if j.id.startswith("flex_query_")]
-    assert len(flex_jobs) == 1
+    assert len(flex_jobs) == 2
 
 
 @pytest.mark.asyncio

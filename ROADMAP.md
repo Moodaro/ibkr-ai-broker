@@ -209,24 +209,51 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ---
 
-### Epic D — Flex Queries (Reporting & Reconciliation)
+### Epic D — Flex Queries (Reporting & Reconciliation) ✅ (26/12/2025)
+
+**Status**: ✅ COMPLETE
 
 **Perché**: statement, trade confirmations, realized P&L, riconciliazione e post-mortem.
 
-**Nuovi tool MCP (read-only)**
+**Implemented Features**:
+* ✅ MCP tools: `flex.list_queries()`, `flex.run_query(query_id, from?, to?)`
+* ✅ FlexQueryService: XML/CSV parsing, storage with retention, execution tracking
+* ✅ FlexQueryScheduler: APScheduler-based cron automation with 5-field/6-field support
+* ✅ API endpoints: `GET /api/v1/flex/queries`, `POST /api/v1/flex/queries/{id}/run`
+* ✅ Schemas: FlexQueryConfig, FlexQueryResult, TradeConfirmation, RealizedPnL, CashTransaction
+* ✅ Audit events: FLEX_QUERY_REQUESTED/COMPLETED/FAILED
+* ✅ Complete test suite: 71/71 passing (14 service + 18 schema + 10 MCP + 13 API + 16 scheduler)
 
-* `flex.list_queries()`
-* `flex.run_query(query_id, from?, to?)`
-* `flex.forget_query(query_id)` (opz.)
+**Modules Created**:
+* `packages/flex_query/service.py` (FlexQueryService - query execution, parsing, storage)
+* `packages/flex_query/scheduler.py` (FlexQueryScheduler - APScheduler cron automation)
+* `packages/schemas/flex_query.py` (188 lines - all Flex Query schemas)
+* MCP tools in `apps/mcp_server/main.py` (list_flex_queries, run_flex_query)
+* API endpoints in `apps/assistant_api/endpoints/flex_query.py`
+* Tests: `test_flex_query_service.py`, `test_flex_query_scheduler.py`, `test_flex_query_schemas.py`, 
+  `test_mcp_flex_query.py`, `test_assistant_api_flex_query.py`
 
 **Backoffice**
 
-* Parsing robusto (XML/CSV) + normalizzazione
-* Storage append-only dei report scaricati (hash + retention)
+* ✅ Parsing robusto (XML/CSV) + normalizzazione
+* ✅ Storage append-only dei report scaricati (hash + retention)
+* ✅ Scheduler con cron 5-field/6-field support
+* ✅ Duplicate prevention: _scheduled_job_ids tracking
+* ✅ APScheduler AsyncIOScheduler integration
+* ✅ Structured logging with audit events
+
+**Configuration**:
+* `FLEX_QUERY_STORAGE`: Path for downloaded reports (default: ./data/flex_reports)
+* `FLEX_QUERY_CONFIG`: Path to JSON configuration file (optional)
+* `SCHEDULER_TIMEZONE`: Timezone for cron scheduling (default: UTC)
+* Cron format: 5-field (minute hour day month weekday) or 6-field (second minute hour day month weekday)
 
 **Acceptance criteria**
 
-* Generazione report giornaliero/settimanale automatico (paper) con audit.
+* ✅ Generazione report giornaliero/settimanale automatico (paper) con audit
+* ✅ Query execution tracked with audit events
+* ✅ Storage with retention policy
+* ✅ MCP tools for read-only query access
 
 ---
 

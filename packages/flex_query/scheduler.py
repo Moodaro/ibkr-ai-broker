@@ -4,7 +4,6 @@ Background scheduler for automated Flex Query execution.
 Uses APScheduler to run queries on cron schedules defined in configuration.
 """
 
-import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,8 +12,9 @@ from apscheduler.triggers.cron import CronTrigger
 
 from packages.audit_store import AuditEvent, AuditStore, EventType
 from packages.flex_query.service import FlexQueryService
+from packages.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FlexQueryScheduler:
@@ -149,41 +149,42 @@ class FlexQueryScheduler:
             
             if not query.schedule_cron:
                 logger.warning(
-                    "Query has auto_schedule=True but no cron expression",
-                    extra={"query_id": query.query_id, "name": query.name}
+                    "query_missing_cron_expression",
+                    query_id=query.query_id,
+                    query_name=query.name
                 )
                 continue
             
             try:
-                self._add_job(query)
-                scheduled_count += 1
+                was_scheduled = self._add_job(query)
+                if was_scheduled:
+                    scheduled_count += 1
             except Exception as e:
                 logger.error(
-                    "Failed to schedule query",
-                    extra={
-                        "query_id": query.query_id,
-                        "name": query.name,
-                        "error": str(e)
-                    },
+                    "query_schedule_failed",
+                    query_id=query.query_id,
+                    query_name=query.name,
+                    error=str(e),
                     exc_info=True
                 )
         
         logger.info(
-            "Auto-scheduled queries",
-            extra={
-                "total_queries": len(queries.queries),
-                "scheduled": scheduled_count
-            }
+            "auto_scheduled_queries",
+            total_queries=len(queries.queries),
+            scheduled=scheduled_count
         )
         
         return scheduled_count
     
-    def _add_job(self, query) -> None:
+    def _add_job(self, query) -> bool:
         """
         Add a single query as a scheduled job.
         
         Args:
             query: FlexQueryConfig instance
+        
+        Returns:
+            True if query was scheduled, False if already scheduled or skipped
         
         Raises:
             ValueError: If cron expression is invalid
@@ -193,25 +194,43 @@ class FlexQueryScheduler:
         # Skip if already scheduled
         if job_id in self._scheduled_job_ids:
             logger.debug(
-                "Query already scheduled, skipping",
-                extra={"query_id": query.query_id}
+                "query_already_scheduled",
+                query_id=query.query_id
             )
-            return
+            return False
         
-        # Parse cron expression
+        # Parse cron expression (support 5 or 6 fields)
         try:
-            trigger = CronTrigger.from_crontab(
-                query.schedule_cron,
-                timezone=self.scheduler.timezone
-            )
+            fields = query.schedule_cron.strip().split()
+            
+            if len(fields) == 5:
+                # Standard 5-field cron: minute hour day month weekday
+                trigger = CronTrigger.from_crontab(
+                    query.schedule_cron,
+                    timezone=self.scheduler.timezone
+                )
+            elif len(fields) == 6:
+                # 6-field cron: second minute hour day month weekday
+                # APScheduler CronTrigger supports seconds in constructor
+                second, minute, hour, day, month, day_of_week = fields
+                trigger = CronTrigger(
+                    second=second,
+                    minute=minute,
+                    hour=hour,
+                    day=day,
+                    month=month,
+                    day_of_week=day_of_week,
+                    timezone=self.scheduler.timezone
+                )
+            else:
+                raise ValueError(f"Cron expression must have 5 or 6 fields, got {len(fields)}")
+                
         except Exception as e:
             logger.error(
-                "Invalid cron expression",
-                extra={
-                    "query_id": query.query_id,
-                    "cron": query.schedule_cron,
-                    "error": str(e)
-                }
+                "invalid_cron_expression",
+                query_id=query.query_id,
+                cron=query.schedule_cron,
+                error=str(e)
             )
             raise ValueError(f"Invalid cron expression: {query.schedule_cron}") from e
         
@@ -240,6 +259,8 @@ class FlexQueryScheduler:
                 )
             }
         )
+        
+        return True
     
     async def _execute_scheduled_query(self, query_id: str) -> None:
         """
