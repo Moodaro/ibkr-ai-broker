@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Optional
 
 from packages.broker_ibkr import Portfolio
+from packages.broker_ibkr.models import OrderSide
 from packages.schemas import OrderIntent
 from packages.trade_sim import SimulationResult, SimulationStatus
 
@@ -82,7 +83,20 @@ class RiskEngine:
             violated_rules.append("R1")
 
         # R2: Maximum position size as % of portfolio
-        position_value_after = simulation.exposure_after
+        # Calculate position value for the specific symbol after trade
+        symbol = intent.instrument.symbol
+        current_position_value = Decimal("0")
+        for pos in portfolio.positions:
+            if pos.instrument.symbol == symbol:
+                current_position_value = pos.market_value
+                break
+        
+        # Calculate position value after trade
+        if intent.side == OrderSide.BUY:
+            position_value_after = current_position_value + simulation.gross_notional
+        else:  # SELL
+            position_value_after = current_position_value - simulation.gross_notional
+        
         portfolio_value = portfolio.total_value
         if portfolio_value > 0:
             position_pct = (position_value_after / portfolio_value) * 100
@@ -138,7 +152,7 @@ class RiskEngine:
                 f"Notional ${gross_notional:,.2f} is close to limit ${self.limits.max_notional:,.2f}"
             )
 
-        if "position_pct" in metrics and metrics["position_pct"] > float(
+        if "position_pct" in metrics and metrics["position_pct"] >= float(
             self.limits.max_position_pct * Decimal("0.8")
         ):
             warnings.append(

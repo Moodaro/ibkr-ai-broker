@@ -150,7 +150,7 @@ async def test_simulate_order_success(mock_audit_store, mock_broker, mock_simula
     data = json.loads(result[0].text)
     assert data["status"] == "SUCCESS"
     assert "gross_notional" in data
-    assert "estimated_fees" in data
+    assert "estimated_fee" in data
     assert "cash_after" in data
 
 

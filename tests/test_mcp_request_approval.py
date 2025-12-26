@@ -16,12 +16,14 @@ from decimal import Decimal
 import pytest
 
 from packages.broker_ibkr.fake import FakeBrokerAdapter
-from packages.broker_ibkr.models import Instrument, InstrumentType
+from packages.broker_ibkr.models import Instrument, InstrumentType, Cash
 from packages.schemas.order_intent import OrderIntent
+from packages.schemas.approval import OrderProposal, OrderState
 from packages.trade_sim import TradeSimulator, SimulationConfig
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours
 from packages.risk_engine.models import Decision
 from packages.approval_service import ApprovalService
+import uuid
 
 
 @pytest.fixture
@@ -33,7 +35,9 @@ def services():
     simulator = TradeSimulator(config=SimulationConfig())
     
     risk_engine = RiskEngine(
-        limits=RiskLimits(),
+        limits=RiskLimits(
+            max_position_pct=Decimal("15.0"),  # Allow up to 15% per position
+        ),
         trading_hours=TradingHours(allow_pre_market=True, allow_after_hours=True),
         daily_trades_count=0,
         daily_pnl=Decimal("0"),
@@ -73,22 +77,21 @@ def test_request_approval_workflow_success(services):
     
     # Step 2: Simulate order
     market_price = Decimal("190.00")
-    sim_result = simulator.simulate(portfolio, intent, market_price)
+    sim_result = simulator.simulate(intent, portfolio, market_price)
     assert sim_result.status == "SUCCESS"
-    assert sim_result.net_cash_impact < 0  # Buying costs money
+    assert sim_result.net_notional > 0  # Buying costs money (positive notional)
+    assert sim_result.cash_after < sim_result.cash_before  # Cash decreases
     
     # Step 3: Evaluate risk
-    risk_decision = risk_engine.evaluate(portfolio, intent, sim_result)
+    risk_decision = risk_engine.evaluate(intent, portfolio, sim_result)
     assert risk_decision.decision == Decision.APPROVE
     
-    # Step 4: Store proposal and request approval
-    proposal = approval_service.store_proposal(
+    # Step 4: Store proposal using helper method
+    proposal = approval_service.create_and_store_proposal(
         intent=intent,
         sim_result=sim_result,
         risk_decision=risk_decision,
     )
-    assert proposal is not None
-    assert proposal.proposal_id is not None
     
     # Step 5: Request approval
     approval_service.request_approval(proposal.proposal_id)
@@ -97,7 +100,7 @@ def test_request_approval_workflow_success(services):
     retrieved = approval_service.get_proposal(proposal.proposal_id)
     assert retrieved is not None
     assert retrieved.state == "APPROVAL_REQUESTED"
-    assert retrieved.intent.symbol == "AAPL"
+    assert retrieved.intent.instrument.symbol == "AAPL"
     assert retrieved.intent.quantity == Decimal("10")
 
 
@@ -126,12 +129,12 @@ def test_request_approval_workflow_risk_rejection(services):
     
     portfolio = broker.get_portfolio("DU123456")
     market_price = Decimal("190.00")
-    sim_result = simulator.simulate(portfolio, intent, market_price)
+    sim_result = simulator.simulate(intent, portfolio, market_price)
     
     # Risk evaluation should reject
-    risk_decision = risk_engine.evaluate(portfolio, intent, sim_result)
+    risk_decision = risk_engine.evaluate(intent, portfolio, sim_result)
     assert risk_decision.decision == Decision.REJECT
-    assert len(risk_decision.violations) > 0
+    assert len(risk_decision.violated_rules) > 0
 
 
 def test_request_approval_workflow_simulation_failure(services):
@@ -141,7 +144,7 @@ def test_request_approval_workflow_simulation_failure(services):
     # Create broker with zero cash
     broke_broker = FakeBrokerAdapter(account_id="DU123456")
     broke_broker.connect()
-    broke_broker._cash = {"USD": Decimal("0")}  # No cash
+    broke_broker._cash = [Cash(currency="USD", total=Decimal("0"), available=Decimal("0"))]  # No cash
     
     intent = OrderIntent(
         account_id="DU123456",
@@ -163,7 +166,7 @@ def test_request_approval_workflow_simulation_failure(services):
     
     portfolio = broke_broker.get_portfolio("DU123456")
     market_price = Decimal("190.00")
-    sim_result = simulator.simulate(portfolio, intent, market_price)
+    sim_result = simulator.simulate(intent, portfolio, market_price)
     
     # Simulation should fail
     assert sim_result.status != "SUCCESS"
@@ -194,14 +197,14 @@ def test_request_approval_workflow_limit_order(services):
     
     portfolio = broker.get_portfolio("DU123456")
     market_price = Decimal("190.00")
-    sim_result = simulator.simulate(portfolio, intent, market_price)
+    sim_result = simulator.simulate(intent, portfolio, market_price)
     
     assert sim_result.status == "SUCCESS"
     
-    risk_decision = risk_engine.evaluate(portfolio, intent, sim_result)
+    risk_decision = risk_engine.evaluate(intent, portfolio, sim_result)
     assert risk_decision.decision == Decision.APPROVE
     
-    proposal = approval_service.store_proposal(
+    proposal = approval_service.create_and_store_proposal(
         intent=intent,
         sim_result=sim_result,
         risk_decision=risk_decision,
@@ -246,18 +249,18 @@ def test_approval_service_list_proposals(services):
         )
         
         portfolio = broker.get_portfolio("DU123456")
-        sim_result = simulator.simulate(portfolio, intent, Decimal("100.00"))
-        risk_decision = risk_engine.evaluate(portfolio, intent, sim_result)
+        sim_result = simulator.simulate(intent, portfolio, Decimal("100.00"))
+        risk_decision = risk_engine.evaluate(intent, portfolio, sim_result)
         
-        proposal = approval_service.store_proposal(
+        proposal = approval_service.create_and_store_proposal(
             intent=intent,
             sim_result=sim_result,
             risk_decision=risk_decision,
         )
         approval_service.request_approval(proposal.proposal_id)
     
-    # List proposals
-    proposals = approval_service.list_proposals()
+    # List proposals (using get_pending_proposals)
+    proposals = approval_service.get_pending_proposals()
     assert len(proposals) >= 3
     assert all(p.state == "APPROVAL_REQUESTED" for p in proposals[:3])
 

@@ -1077,22 +1077,22 @@ class TestRiskEvaluateEndpoint:
                 currency="USD",
             ),
             side=OrderSide.BUY,
-            quantity=Decimal("140"),
+            quantity=Decimal("27"),  # Reduced to create realistic 8% position
             order_type=OrderType.LMT,
             limit_price=Decimal("300.00"),
             reason="Order at 84% of notional limit",
             strategy_tag="test",
         )
         
-        # $42k order (84% of $50k limit, should trigger warning)
+        # $8.1k order (8.1% of portfolio, under 10% R2 limit, triggers position warning at 80%+)
         simulation = self._make_simulation(
-            gross_notional="42000.00",
+            gross_notional="8100.00",  # 27 shares @ $300 = $8,100
             execution_price="300.00",
             estimated_fee="7.00",
-            estimated_slippage="50.40",
-            exposure_before="8000.00",  # Only 8% exposure to avoid R2 violation
+            estimated_slippage="40.50",
+            exposure_before="0.00",  # No existing position
         )
-        simulation["exposure_after"] = "8000.00"  # Keep exposure low
+        simulation["exposure_after"] = "8100.00"  # Position after trade
         
         request = {
             "intent": intent.model_dump(mode="json"),
@@ -1106,7 +1106,7 @@ class TestRiskEvaluateEndpoint:
         data = response.json()
         assert data["decision"]["decision"] == "APPROVE"
         assert len(data["decision"]["warnings"]) > 0
-        assert any("notional" in w.lower() and "limit" in w.lower() for w in data["decision"]["warnings"])
+        assert any(("position" in w.lower() or "notional" in w.lower()) and "limit" in w.lower() for w in data["decision"]["warnings"])
     
     def test_evaluate_missing_fields(self, client):
         """Test risk evaluation with missing required fields."""

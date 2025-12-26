@@ -68,6 +68,28 @@ class OrderProposal(BaseModel):
         """Compute SHA256 hash of intent JSON for anti-tamper verification."""
         return hashlib.sha256(self.intent_json.encode('utf-8')).hexdigest()
     
+    @property
+    def intent(self):
+        """Parse and return OrderIntent from JSON."""
+        from packages.schemas.order_intent import OrderIntent
+        return OrderIntent.model_validate_json(self.intent_json)
+    
+    @property
+    def simulation(self):
+        """Parse and return SimulationResult from JSON."""
+        if self.simulation_json:
+            from packages.trade_sim.models import SimulationResult
+            return SimulationResult.model_validate_json(self.simulation_json)
+        return None
+    
+    @property
+    def risk_decision(self):
+        """Parse and return RiskDecision from JSON."""
+        if self.risk_decision_json:
+            from packages.risk_engine.models import RiskDecision
+            return RiskDecision.model_validate_json(self.risk_decision_json)
+        return None
+    
     def with_state(self, new_state: OrderState, **updates) -> "OrderProposal":
         """Create new OrderProposal with updated state and fields."""
         data = self.model_dump(exclude={"updated_at"})

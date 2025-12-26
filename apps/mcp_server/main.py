@@ -90,8 +90,11 @@ def emit_audit_event(
         if error is not None:
             event_data["error"] = error
         
+        # Choose appropriate event type
+        event_type = EventType.ERROR_OCCURRED if error is not None else EventType.PORTFOLIO_SNAPSHOT_TAKEN
+        
         event = AuditEventCreate(
-            event_type=EventType.CUSTOM if error is None else EventType.ERROR_OCCURRED,
+            event_type=event_type,
             correlation_id=correlation_id,
             timestamp=datetime.now(timezone.utc),
             data=event_data,
@@ -364,20 +367,20 @@ async def handle_simulate_order(arguments: dict[str, Any]) -> list[TextContent]:
             order_type=order_type.upper(),
             limit_price=limit_price,
             time_in_force="DAY",
-            reason="MCP simulation",
+            reason="MCP tool order simulation",
             strategy_tag="mcp",
             constraints={},
         )
         
         # Simulate
-        sim_result = simulator.simulate(portfolio, intent, market_price)
+        sim_result = simulator.simulate(intent, portfolio, market_price)
         
         result = {
             "status": sim_result.status,
             "gross_notional": str(sim_result.gross_notional),
             "estimated_slippage": str(sim_result.estimated_slippage),
-            "estimated_fees": str(sim_result.estimated_fees),
-            "net_cash_impact": str(sim_result.net_cash_impact),
+            "estimated_fee": str(sim_result.estimated_fee),
+            "net_notional": str(sim_result.net_notional),
             "cash_before": str(sim_result.cash_before),
             "cash_after": str(sim_result.cash_after),
             "exposure_before": str(sim_result.exposure_before),
@@ -452,13 +455,13 @@ async def handle_evaluate_risk(arguments: dict[str, Any]) -> list[TextContent]:
             order_type=order_type.upper(),
             limit_price=limit_price,
             time_in_force="DAY",
-            reason="MCP risk evaluation",
+            reason="MCP tool risk evaluation",
             strategy_tag="mcp",
             constraints={},
         )
         
         # Simulate first
-        sim_result = simulator.simulate(portfolio, intent, market_price)
+        sim_result = simulator.simulate(intent, portfolio, market_price)
         
         # Evaluate risk
         risk_decision = risk_engine.evaluate(intent, portfolio, sim_result)
@@ -561,7 +564,7 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
         )
         
         # Simulate
-        sim_result = simulator.simulate(portfolio, intent, market_price)
+        sim_result = simulator.simulate(intent, portfolio, market_price)
         
         if sim_result.status != "SUCCESS":
             result = {

@@ -57,6 +57,50 @@ class ApprovalService:
         
         self._proposals[proposal.proposal_id] = proposal
     
+    def create_and_store_proposal(
+        self,
+        intent,
+        sim_result,
+        risk_decision,
+        correlation_id: Optional[str] = None
+    ) -> OrderProposal:
+        """
+        Create OrderProposal from objects and store it.
+        
+        Helper method for tests and backwards compatibility.
+        
+        Args:
+            intent: OrderIntent object
+            sim_result: SimulationResult object
+            risk_decision: RiskDecision object
+            correlation_id: Optional correlation ID (generated if not provided)
+            
+        Returns:
+            Created OrderProposal
+        """
+        proposal_id = str(uuid.uuid4())
+        if correlation_id is None:
+            correlation_id = f"test-{proposal_id[:8]}"
+        
+        # Determine state based on risk decision
+        from packages.risk_engine.models import Decision
+        if risk_decision.decision == Decision.APPROVE:
+            state = OrderState.RISK_APPROVED
+        else:
+            state = OrderState.RISK_REJECTED
+        
+        proposal = OrderProposal(
+            proposal_id=proposal_id,
+            correlation_id=correlation_id,
+            intent_json=intent.model_dump_json(exclude_none=True),
+            simulation_json=sim_result.model_dump_json(exclude_none=True),
+            risk_decision_json=risk_decision.model_dump_json(exclude_none=True),
+            state=state,
+        )
+        
+        self.store_proposal(proposal)
+        return proposal
+    
     def get_proposal(self, proposal_id: str) -> Optional[OrderProposal]:
         """Get proposal by ID."""
         return self._proposals.get(proposal_id)
