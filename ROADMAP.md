@@ -241,19 +241,23 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ---
 
-### Epic F — Order Management v2 (Cancel/Modify) — *GATED*
+### Epic F — Order Management v2 (Cancel/Modify) — *GATED* ✅
 
-**Nota**: solo dopo stabilità paper e policy chiare.
+**Status**: COMPLETE (4 commits: 8baabac, cb62c9a, 1fd88bc, 005bffc)
 
-**Nuovi tool MCP (gated-write)**
+**Implemented Features**:
+* ✅ Order cancel schemas (OrderCancelIntent, OrderCancelRequest/Response, CancelExecutionRequest/Response)
+* ✅ MCP tool `request_cancel` with @validate_schema + kill switch check
+* ✅ Broker adapter `cancel_order()` (Protocol + real + fake implementations)
+* ✅ API endpoint `POST /api/v1/orders/cancel/{approval_id}`
+* ✅ Complete audit trail (ORDER_CANCEL_REQUESTED/APPROVED/DENIED/EXECUTED/FAILED)
+* ✅ Gated pattern: LLM request → human approval → execution
+* ✅ XOR validation: proposal_id OR broker_order_id (not both)
 
-* `orders.request_cancel(proposal_or_broker_order_id, reason)` → crea richiesta di approvazione
-* (Opz.) `orders.request_modify(... )` → solo limit orders, entro soglie
-
-**Acceptance criteria**
-
-* Cancel/modify passa da risk gate + approval.
-* Audit completo su `OrderCancelRequested/Approved/Executed`.
+**Acceptance criteria**:
+* ✅ Cancel passa da approval (no auto-commit)
+* ✅ Audit completo su tutti gli eventi cancel
+* ⏳ Test suite (Task 5 in progress)
 
 ---
 

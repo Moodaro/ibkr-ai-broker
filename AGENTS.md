@@ -127,6 +127,41 @@ if approval_token := approval_service.get_token(approval_id):
     broker.submit_order(intent, approval_token)
 ```
 
+### Order cancellation pattern (gated)
+```python
+# Step 1: Request cancellation
+cancel_intent = OrderCancelIntent(
+    account_id="DU12345",
+    proposal_id="abc123" # OR broker_order_id="12345"
+    reason="Market conditions changed"
+)
+cancel_approval_id = f"cancel_{uuid.uuid4().hex[:12]}"
+
+# Emit audit event
+audit_store.append_event(AuditEvent(
+    event_type=EventType.ORDER_CANCEL_REQUESTED,
+    correlation_id=correlation_id,
+    data={"approval_id": cancel_approval_id, "intent": cancel_intent.model_dump()}
+))
+
+# Step 2: Wait for human approval/denial
+# User approves via dashboard or API
+
+# Step 3: Execute cancellation (only if approved)
+if action == "grant":
+    try:
+        broker.cancel_order(broker_order_id)
+        audit_store.append_event(AuditEvent(
+            event_type=EventType.ORDER_CANCEL_EXECUTED,
+            data={"broker_order_id": broker_order_id}
+        ))
+    except Exception as e:
+        audit_store.append_event(AuditEvent(
+            event_type=EventType.ORDER_CANCEL_FAILED,
+            data={"error": str(e)}
+        ))
+```
+
 ### Audit event pattern
 ```python
 from packages.audit_store import AuditStore, AuditEvent, EventType
