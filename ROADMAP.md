@@ -230,21 +230,44 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ---
 
-### Epic E — MCP Permission Model + Versioning + Hardening
+### Epic E — MCP Permission Model + Versioning + Hardening ✅ (26/12/2025)
 
-**Perché**: evitare escalation tool, rendere stabile il client e prevenire prompt injection.
+**Status**: ✅ COMPLETE
 
-**Improvements**
+**Implemented Features**:
+* ✅ Rate limiting: Per-tool (60/min), per-session (100/min), global (1000/min)
+* ✅ Circuit breaker: 100 consecutive rejections → 300s timeout
+* ✅ Output redaction: PII/sensitive data (account IDs → DU****56, tokens → ***)
+* ✅ Tool policy: Configurable allowlist, parameter constraints, session restrictions
+* ✅ Parameter validation: Strict schema validation with @validate_schema (extra="forbid")
+* ✅ Audit logging: All tool calls, rejections, and errors logged
+* ✅ Fail-safe defaults: Unknown tools denied, unknown parameters rejected
+* ✅ Integration: Security checks in MCP server call_tool handler
+* ✅ Test suite: 19/19 tests passing (rate limiter, redactor, policy enforcement)
+* ✅ Documentation: Security patterns in AGENTS.md, example policy config
 
-* Catalog tool versionato: `toolName@v1` (o namespace `broker.v1.get_positions`).
-* Allowlist parametrica + policy per tool.
-* Rate limit per tool e per session.
-* Redaction output (PII/segreti).
+**Modules Created**:
+* `packages/mcp_security/rate_limiter.py` (245 lines)
+* `packages/mcp_security/redactor.py` (172 lines)
+* `packages/mcp_security/policy.py` (253 lines)
+* `config/mcp_policy.example.json` (policy template)
+* `tests/test_mcp_security.py` (19 tests, all passing)
 
-**Acceptance criteria**
+**Configuration**:
+* `MCP_POLICY_PATH`: Path to JSON policy file (optional, uses defaults if not set)
+* Policy format: JSON with rules array (tool_name, action, max_calls, allowed_sessions, etc.)
+* Rate limits configurable via RateLimitConfig
+* Redaction patterns configurable via RedactionConfig
 
-* Nessun tool write esposto oltre `request_approval`.
-* `request_approval` rifiuta qualsiasi parametro non nello schema.
+**Acceptance criteria**:
+* ✅ Nessun tool write esposto oltre `request_approval` e `request_cancel`
+* ✅ `request_approval` rifiuta qualsiasi parametro non nello schema (extra="forbid")
+* ✅ Rate limiting prevents DoS attacks
+* ✅ Output redaction prevents PII leakage
+* ✅ Tool policy enforces allowlist and restrictions
+
+**Deferred**:
+* Tool versioning (e.g., `broker.v1.get_positions`) - not critical for v1, defer to v2
 
 ---
 

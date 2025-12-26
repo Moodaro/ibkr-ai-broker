@@ -2,7 +2,7 @@
 MCP Tool validation and security utilities.
 
 Provides decorators and utilities for strict parameter validation,
-rate limiting, and output redaction.
+rate limiting, output redaction, and tool policy enforcement.
 """
 
 import functools
@@ -11,6 +11,11 @@ import logging
 from typing import Any, Callable, TypeVar
 
 from pydantic import BaseModel, ValidationError
+
+# Re-export security modules
+from .rate_limiter import RateLimiter, RateLimitConfig, get_rate_limiter
+from .redactor import OutputRedactor, RedactionConfig, get_redactor, redact_output
+from .policy import ToolPolicy, ToolPolicyRule, ToolAction, get_policy
 
 logger = logging.getLogger(__name__)
 

@@ -1,21 +1,40 @@
 """
 MCP Server main entry point for IBKR AI Broker.
 
-Exposes tools via Model Context Protocol:
+Exposes 14 tools via Model Context Protocol:
+
+Read-only tools (12):
 - get_portfolio: Retrieve portfolio snapshot
 - get_positions: List open positions
 - get_cash: Get cash balances
 - get_open_orders: List pending orders
 - simulate_order: Pre-trade simulation
 - evaluate_risk: Risk gate evaluation
-- request_approval: Create order proposal (GATED - requires human approval)
+- get_market_snapshot: Real-time market data snapshot
+- get_market_bars: Historical market data bars
+- instrument_search: Search for instruments by symbol/name
+- instrument_resolve: Resolve instrument details by symbol
+- list_flex_queries: List configured Flex Query reports
+- run_flex_query: Execute a Flex Query report
 
-Security:
-- request_approval creates proposals but does NOT execute orders
-- Human approval required via dashboard
-- All tool calls audited
-- Parameter validation required
-- Rate limiting support
+Gated write tools (2):
+- request_approval: Create order proposal (GATED - requires human approval)
+- request_cancel: Request order cancellation (GATED - requires human approval)
+
+Security (Epic E - MCP Hardening):
+- Rate limiting: Per-tool (60/min), per-session (100/min), global (1000/min)
+- Circuit breaker: 100 consecutive rejections → 300s timeout
+- Tool policy: Configurable allowlist, parameter validation, session restrictions
+- Output redaction: PII/sensitive data (account IDs, tokens, emails)
+- Parameter validation: Strict schema validation (extra="forbid")
+- Audit logging: All tool calls, rejections, and errors logged
+
+Configuration:
+- MCP_POLICY_PATH: Path to JSON policy file (optional, uses defaults if not set)
+- LOG_LEVEL: Logging level (default: INFO)
+- FLEX_QUERY_CONFIG: Path to Flex Query configuration (optional)
+
+All tool calls are audited. Human approval required for write operations.
 """
 
 import asyncio
@@ -36,6 +55,9 @@ from packages.broker_ibkr.factory import get_broker_adapter
 from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.mcp_security import validate_schema
+from packages.mcp_security.rate_limiter import get_rate_limiter, RateLimitConfig
+from packages.mcp_security.redactor import get_redactor, RedactionConfig
+from packages.mcp_security.policy import get_policy, ToolPolicy
 from packages.mcp_security.schemas import (
     RequestApprovalSchema,
     RequestCancelSchema,
@@ -71,7 +93,11 @@ risk_engine: Optional[RiskEngine] = None
 approval_service: Optional[ApprovalService] = None
 kill_switch: Optional[KillSwitch] = None
 flex_query_service: Optional[FlexQueryService] = None
-flex_query_service: Optional[FlexQueryService] = None
+
+# Security services
+rate_limiter = None  # Initialized in main()
+redactor = None  # Initialized in main()
+policy = None  # Initialized in main()
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -1216,6 +1242,7 @@ async def handle_run_flex_query(arguments: dict[str, Any]) -> list[TextContent]:
 async def main():
     """Main entry point for MCP server."""
     global audit_store, broker, simulator, risk_engine, approval_service, kill_switch, flex_query_service
+    global rate_limiter, redactor, policy
     
     # Setup logging
     import os
@@ -1248,7 +1275,21 @@ async def main():
         config_path=os.getenv("FLEX_QUERY_CONFIG", None)
     )
     
-    logger.info("mcp_server_services_initialized")
+    # Initialize security services
+    rate_limiter = get_rate_limiter(RateLimitConfig())
+    redactor = get_redactor(RedactionConfig())
+    
+    # Load policy from file if specified, otherwise use defaults
+    policy_path = os.getenv("MCP_POLICY_PATH")
+    if policy_path:
+        from pathlib import Path
+        policy = get_policy(Path(policy_path))
+    else:
+        policy = get_policy()  # Use defaults
+    
+    logger.info("mcp_server_services_initialized",
+               security_enabled=True,
+               policy_rules=len(policy.rules))
     
     # Create MCP server
     server = Server("ibkr-ai-broker-mcp")
@@ -1540,36 +1581,124 @@ async def main():
     # Handle tool calls
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        if name == "get_portfolio":
-            return await handle_get_portfolio(arguments)
-        elif name == "get_positions":
-            return await handle_get_positions(arguments)
-        elif name == "get_cash":
-            return await handle_get_cash(arguments)
-        elif name == "get_open_orders":
-            return await handle_get_open_orders(arguments)
-        elif name == "simulate_order":
-            return await handle_simulate_order(arguments)
-        elif name == "evaluate_risk":
-            return await handle_evaluate_risk(arguments)
-        elif name == "request_approval":
-            return await handle_request_approval(arguments)
-        elif name == "request_cancel":
-            return await handle_request_cancel(arguments)
-        elif name == "get_market_snapshot":
-            return await handle_get_market_snapshot(arguments)
-        elif name == "get_market_bars":
-            return await handle_get_market_bars(arguments)
-        elif name == "instrument_search":
-            return await handle_instrument_search(arguments)
-        elif name == "instrument_resolve":
-            return await handle_instrument_resolve(arguments)
-        elif name == "list_flex_queries":
-            return await handle_list_flex_queries(arguments)
-        elif name == "run_flex_query":
-            return await handle_run_flex_query(arguments)
-        else:
-            raise ValueError(f"Unknown tool: {name}")
+        """Handle tool calls with security checks."""
+        
+        # Generate session ID (for now use correlation ID, can be extended)
+        correlation_id = str(uuid.uuid4())
+        session_id = arguments.get("session_id", correlation_id)
+        
+        # 1. Policy check: Is tool allowed for this session?
+        allowed, reason = policy.check_tool_allowed(name, session_id, arguments)
+        if not allowed:
+            error_msg = f"Policy denied: {reason}"
+            logger.warning("tool_denied_by_policy",
+                          tool_name=name,
+                          session_id=session_id,
+                          reason=reason)
+            
+            # Audit rejection
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.TOOL_CALL_REJECTED,
+                correlation_id=correlation_id,
+                data={"tool_name": name, "reason": error_msg}
+            ))
+            
+            return [TextContent(type="text", text=json.dumps({
+                "error": error_msg,
+                "tool": name
+            }, cls=DecimalEncoder))]
+        
+        # 2. Rate limit check
+        rate_allowed, rate_reason = rate_limiter.check_rate_limit(name, session_id)
+        if not rate_allowed:
+            error_msg = f"Rate limit exceeded: {rate_reason}"
+            logger.warning("tool_rate_limited",
+                          tool_name=name,
+                          session_id=session_id,
+                          reason=rate_reason)
+            
+            # Audit rate limit hit
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.TOOL_CALL_REJECTED,
+                correlation_id=correlation_id,
+                data={"tool_name": name, "reason": error_msg}
+            ))
+            
+            return [TextContent(type="text", text=json.dumps({
+                "error": error_msg,
+                "tool": name,
+                "retry_after": rate_reason  # Contains seconds if circuit breaker active
+            }, cls=DecimalEncoder))]
+        
+        # 3. Execute tool (existing routing)
+        try:
+            if name == "get_portfolio":
+                result = await handle_get_portfolio(arguments)
+            elif name == "get_positions":
+                result = await handle_get_positions(arguments)
+            elif name == "get_cash":
+                result = await handle_get_cash(arguments)
+            elif name == "get_open_orders":
+                result = await handle_get_open_orders(arguments)
+            elif name == "simulate_order":
+                result = await handle_simulate_order(arguments)
+            elif name == "evaluate_risk":
+                result = await handle_evaluate_risk(arguments)
+            elif name == "request_approval":
+                result = await handle_request_approval(arguments)
+            elif name == "request_cancel":
+                result = await handle_request_cancel(arguments)
+            elif name == "get_market_snapshot":
+                result = await handle_get_market_snapshot(arguments)
+            elif name == "get_market_bars":
+                result = await handle_get_market_bars(arguments)
+            elif name == "instrument_search":
+                result = await handle_instrument_search(arguments)
+            elif name == "instrument_resolve":
+                result = await handle_instrument_resolve(arguments)
+            elif name == "list_flex_queries":
+                result = await handle_list_flex_queries(arguments)
+            elif name == "run_flex_query":
+                result = await handle_run_flex_query(arguments)
+            else:
+                raise ValueError(f"Unknown tool: {name}")
+            
+            # 4. Record successful call in policy tracker
+            policy.record_tool_call(name, session_id)
+            
+            # 5. Redact sensitive data from output
+            # Parse JSON, redact, re-serialize
+            for content_item in result:
+                if content_item.type == "text":
+                    try:
+                        # Try to parse as JSON and redact
+                        data = json.loads(content_item.text)
+                        redacted_data = redactor.redact(data)
+                        content_item.text = json.dumps(redacted_data, cls=DecimalEncoder)
+                    except json.JSONDecodeError:
+                        # Plain text, apply string redaction
+                        content_item.text = redactor.redact(content_item.text)
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Tool execution failed: {str(e)}"
+            logger.error("tool_execution_error",
+                        tool_name=name,
+                        session_id=session_id,
+                        error=str(e))
+            
+            # Audit error
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.TOOL_CALL_REJECTED,
+                correlation_id=correlation_id,
+                data={"tool_name": name, "error": str(e)}
+            ))
+            
+            return [TextContent(type="text", text=json.dumps({
+                "error": error_msg,
+                "tool": name
+            }, cls=DecimalEncoder))]
     
     # Run server
     logger.info("mcp_server_starting", transport="stdio")

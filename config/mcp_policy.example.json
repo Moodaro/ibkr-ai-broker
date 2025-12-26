@@ -1,0 +1,63 @@
+{
+  "rules": [
+    {
+      "tool_name": "get_portfolio",
+      "action": "allow"
+    },
+    {
+      "tool_name": "get_positions",
+      "action": "allow"
+    },
+    {
+      "tool_name": "get_cash",
+      "action": "allow"
+    },
+    {
+      "tool_name": "get_open_orders",
+      "action": "allow"
+    },
+    {
+      "tool_name": "simulate_order",
+      "action": "allow"
+    },
+    {
+      "tool_name": "evaluate_risk",
+      "action": "allow"
+    },
+    {
+      "tool_name": "get_market_snapshot",
+      "action": "allow"
+    },
+    {
+      "tool_name": "get_market_bars",
+      "action": "allow"
+    },
+    {
+      "tool_name": "instrument_search",
+      "action": "allow"
+    },
+    {
+      "tool_name": "instrument_resolve",
+      "action": "allow"
+    },
+    {
+      "tool_name": "list_flex_queries",
+      "action": "allow"
+    },
+    {
+      "tool_name": "run_flex_query",
+      "action": "allow",
+      "max_calls_per_session": 10
+    },
+    {
+      "tool_name": "request_approval",
+      "action": "allow",
+      "max_calls_per_session": 50
+    },
+    {
+      "tool_name": "request_cancel",
+      "action": "allow",
+      "max_calls_per_session": 50
+    }
+  ]
+}

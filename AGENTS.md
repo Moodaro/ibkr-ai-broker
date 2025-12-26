@@ -250,6 +250,117 @@ class RequestApprovalSchema(StrictBaseModel):
 - **Range checking**: Positive quantities/prices enforced
 - **Pattern matching**: Symbol format validated
 - **Audit trail**: Validation errors logged automatically
+
+### MCP security hardening pattern (Epic E)
+```python
+from packages.mcp_security import get_rate_limiter, get_redactor, get_policy
+from packages.mcp_security import RateLimitConfig, RedactionConfig
+
+# Initialize security services (in main())
+rate_limiter = get_rate_limiter(RateLimitConfig())
+redactor = get_redactor(RedactionConfig())
+policy = get_policy()  # Loads from MCP_POLICY_PATH env var or uses defaults
+
+# In call_tool handler
+@server.call_tool()
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    session_id = arguments.get("session_id", str(uuid.uuid4()))
+    
+    # 1. Policy check (allowlist + parameter validation)
+    allowed, reason = policy.check_tool_allowed(name, session_id, arguments)
+    if not allowed:
+        return error_response(f"Policy denied: {reason}")
+    
+    # 2. Rate limit check (per-tool + per-session + global)
+    rate_ok, rate_reason = rate_limiter.check_rate_limit(name, session_id)
+    if not rate_ok:
+        return error_response(f"Rate limit: {rate_reason}")
+    
+    # 3. Execute tool
+    result = await execute_tool(name, arguments)
+    
+    # 4. Record successful call
+    policy.record_tool_call(name, session_id)
+    
+    # 5. Redact sensitive data from output
+    for content in result:
+        if content.type == "text":
+            data = json.loads(content.text)
+            redacted = redactor.redact(data)
+            content.text = json.dumps(redacted)
+    
+    return result
+```
+
+**Policy Configuration** (config/mcp_policy.json):
+```json
+{
+  "rules": [
+    {
+      "tool_name": "get_portfolio",
+      "action": "allow"
+    },
+    {
+      "tool_name": "run_flex_query",
+      "action": "allow",
+      "max_calls_per_session": 10
+    },
+    {
+      "tool_name": "request_approval",
+      "action": "allow",
+      "max_calls_per_session": 50,
+      "denied_parameters": ["bypass_risk"]
+    }
+  ]
+}
+```
+
+**Security Features**:
+- **Rate limiting**: 60/min per-tool, 100/min per-session, 1000/min global
+- **Circuit breaker**: 100 consecutive rejections → 300s timeout
+- **Policy enforcement**: Tool allowlist, parameter validation, session restrictions
+- **Output redaction**: PII/sensitive data (account IDs → DU****56, tokens → ***)
+- **Audit logging**: All tool calls, rejections, and errors logged
+- **Fail-safe defaults**: Unknown tools denied, unknown parameters rejected
+
+### Background scheduler pattern
+```python
+from packages.flex_query.scheduler import FlexQueryScheduler
+from packages.flex_query.service import FlexQueryService
+
+# Initialize scheduler with service and audit store
+scheduler = FlexQueryScheduler(
+    service=flex_query_service,
+    audit_store=audit_store,
+    timezone="UTC"  # or "America/New_York", etc.
+)
+
+# Start scheduler (only schedules enabled + auto_schedule queries)
+scheduler.start()
+
+# ... application runs, queries execute on cron schedule ...
+
+# Stop scheduler on shutdown
+scheduler.stop(wait=True)  # wait for running jobs to complete
+```
+
+**Flex Query Configuration** (JSON):
+```json
+{
+  "query_id": "123456",
+  "name": "Daily Trades",
+  "query_type": "TRADES",
+  "enabled": true,
+  "auto_schedule": true,
+  "schedule_cron": "0 9 * * *",  // 9 AM daily
+  "retention_days": 90
+}
+```
+
+**Cron Expression Format**:
+- **5 fields**: `minute hour day month weekday` (e.g., `0 9 * * *`)
+- **6 fields**: `second minute hour day month weekday` (e.g., `0 0 9 * * *`)
+- Examples:
   - `0 9 * * *` - Every day at 9:00 AM
   - `30 14 * * 1-5` - Weekdays at 2:30 PM
   - `0 0 1 * *` - First day of month at midnight
