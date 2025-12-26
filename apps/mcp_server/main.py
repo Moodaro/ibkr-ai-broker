@@ -35,6 +35,8 @@ from packages.broker_ibkr import BrokerAdapter
 from packages.broker_ibkr.factory import get_broker_adapter
 from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
+from packages.mcp_security import validate_schema
+from packages.mcp_security.schemas import RequestApprovalSchema
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
 from packages.schemas.market_data import MarketSnapshot, MarketBar, TimeframeType
@@ -487,22 +489,26 @@ async def handle_evaluate_risk(arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(RequestApprovalSchema)
 async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent]:
     """
-    Request approval for an order (GATED TOOL).
+    Request approval for an order (GATED TOOL - STRICT VALIDATION).
     
     This tool creates a proposal, simulates it, evaluates risk, and if approved,
     requests human approval. Returns proposal_id for tracking.
     
+    **SECURITY**: All parameters validated against RequestApprovalSchema.
+    Extra/unknown parameters are REJECTED (prevents parameter injection).
+    
     Args:
-        account_id: Account identifier
-        symbol: Instrument symbol
-        side: BUY or SELL
-        quantity: Order quantity
-        order_type: MKT, LMT, etc.
-        limit_price: (optional) Limit price for LMT orders
-        market_price: Current market price
-        reason: Reason for the order (min 10 chars)
+        account_id: Account identifier (required, 1-100 chars)
+        symbol: Instrument symbol (required, 1-50 chars)
+        side: BUY or SELL (required, exact match)
+        quantity: Order quantity (required, must be >0)
+        order_type: MKT, LMT, STP, STP_LMT (default: MKT)
+        limit_price: Limit price for LMT orders (optional, must be >0)
+        market_price: Current market price (required, must be >0)
+        reason: Reason for order (required, 10-500 chars)
         
     Returns:
         Proposal ID and status (RISK_APPROVED + APPROVAL_REQUESTED or RISK_REJECTED)
