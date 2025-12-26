@@ -129,15 +129,59 @@ if approval_token := approval_service.get_token(approval_id):
 
 ### Audit event pattern
 ```python
-from packages.audit_store import append_event, AuditEvent
+from packages.audit_store import AuditStore, AuditEvent, EventType
 
-append_event(AuditEvent(
-    type="OrderProposed",
+audit_store = AuditStore("data/audit.db")
+audit_store.append_event(AuditEvent(
+    event_type=EventType.ORDER_PROPOSED,
     correlation_id=correlation_id,
     timestamp=datetime.utcnow(),
     data={"intent": intent.model_dump(), "reason": reason}
 ))
 ```
+
+### Background scheduler pattern
+```python
+from packages.flex_query.scheduler import FlexQueryScheduler
+from packages.flex_query.service import FlexQueryService
+
+# Initialize scheduler with service and audit store
+scheduler = FlexQueryScheduler(
+    service=flex_query_service,
+    audit_store=audit_store,
+    timezone="UTC"  # or "America/New_York", etc.
+)
+
+# Start scheduler (only schedules enabled + auto_schedule queries)
+scheduler.start()
+
+# ... application runs, queries execute on cron schedule ...
+
+# Stop scheduler on shutdown
+scheduler.stop(wait=True)  # wait for running jobs to complete
+```
+
+**Flex Query Configuration** (JSON):
+```json
+{
+  "query_id": "123456",
+  "name": "Daily Trades",
+  "query_type": "TRADES",
+  "enabled": true,
+  "auto_schedule": true,
+  "schedule_cron": "0 9 * * *",  // 9 AM daily
+  "retention_days": 90
+}
+```
+
+**Cron Expression Format**:
+- **5 fields**: `minute hour day month weekday` (e.g., `0 9 * * *`)
+- **6 fields**: `second minute hour day month weekday` (e.g., `0 0 9 * * *`)
+- Examples:
+  - `0 9 * * *` - Every day at 9:00 AM
+  - `30 14 * * 1-5` - Weekdays at 2:30 PM
+  - `0 0 1 * *` - First day of month at midnight
+  - `*/15 * * * *` - Every 15 minutes
 
 ## Project structure
 
@@ -184,6 +228,9 @@ Optional:
 - `LOG_LEVEL` - Logging level (default: INFO)
 - `KILL_SWITCH_ENABLED` - Force kill switch (default: false)
 - `RISK_POLICY_PATH` - Path to risk policy YAML
+- `FLEX_QUERY_STORAGE` - Path for Flex Query reports (default: ./data/flex_reports)
+- `FLEX_QUERY_CONFIG` - Path to Flex Query configuration JSON (optional)
+- `SCHEDULER_TIMEZONE` - Timezone for cron scheduling (default: UTC)
 
 ## Troubleshooting
 
