@@ -115,13 +115,13 @@ class CashTransaction(BaseModel):
     transaction_id: str = Field(..., description="Transaction ID")
     account_id: str = Field(..., description="Account identifier")
     
-    date: date = Field(..., description="Transaction date")
+    transaction_date: date = Field(..., description="Transaction date")
     description: str = Field(..., description="Transaction description")
     amount: Decimal = Field(..., description="Amount (signed)")
     balance: Decimal = Field(..., description="Balance after transaction")
     
     currency: str = Field("USD", description="Currency")
-    type: str = Field(..., description="Transaction type (e.g., DEPOSIT, WITHDRAWAL, DIVIDEND)")
+    transaction_type: str = Field(..., description="Transaction type (e.g., DEPOSIT, WITHDRAWAL, DIVIDEND)")
 
 
 class FlexQueryResult(BaseModel):

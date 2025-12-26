@@ -2214,7 +2214,7 @@ async def list_flex_queries(enabled_only: bool = True):
         # Emit audit event
         if audit_store:
             audit_store.append_event(AuditEventCreate(
-                event_type=EventType.CUSTOM,
+                event_type=EventType.MCP_TOOL_COMPLETED,
                 correlation_id=get_correlation_id(),
                 data={
                     "endpoint": "list_flex_queries",
@@ -2230,7 +2230,7 @@ async def list_flex_queries(enabled_only: bool = True):
                 {
                     "query_id": q.query_id,
                     "name": q.name,
-                    "type": q.query_type,
+                    "type": str(q.query_type.value) if q.query_type else None,
                     "description": q.description,
                     "enabled": q.enabled,
                     "auto_schedule": q.auto_schedule,
@@ -2242,8 +2242,9 @@ async def list_flex_queries(enabled_only: bool = True):
         }
     except Exception as e:
         logger.error("list_flex_queries_failed",
-                    error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to list flex queries: {e}")
+                    error=str(e),
+                    exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list flex queries: {str(e)}")
 
 
 @app.post("/api/v1/flex/queries/{query_id}/run")
@@ -2308,7 +2309,7 @@ async def run_flex_query(
         # Emit audit event
         if audit_store:
             audit_store.append_event(AuditEventCreate(
-                event_type=EventType.CUSTOM,
+                event_type=EventType.MCP_TOOL_COMPLETED,
                 correlation_id=get_correlation_id(),
                 data={
                     "endpoint": "run_flex_query",
@@ -2326,21 +2327,23 @@ async def run_flex_query(
         
         response_data = {
             "execution_id": result.execution_id,
-            "status": result.status,
-            "query_type": result.query_type,
+            "status": str(result.status.value) if result.status else None,
+            "query_type": str(result.query_type.value) if result.query_type else None,
+            "message": f"Query {result.status.value.lower()}" if result.status else "Processing",
             "from_date": result.from_date.isoformat() if result.from_date else None,
             "to_date": result.to_date.isoformat() if result.to_date else None,
-            "request_time": result.request_time.isoformat(),
-            "completion_time": result.completion_time.isoformat() if result.completion_time else None,
-            "trades_count": len(result.trades),
-            "pnl_records_count": len(result.pnl_records),
-            "cash_transactions_count": len(result.cash_transactions),
+            "total_trades": len(result.trades),
+            "total_pnl_records": len(result.pnl_records),
+            "total_cash_transactions": len(result.cash_transactions),
+            "trades": [],
+            "pnl_records": [],
+            "cash_transactions": [],
         }
         
         # Include summary data if completed
-        if result.status == "COMPLETED":
+        if result.status.value == "COMPLETED":
             if result.trades:
-                response_data["trades_summary"] = [
+                response_data["trades"] = [
                     {
                         "trade_id": t.trade_id,
                         "symbol": t.symbol,
@@ -2356,7 +2359,7 @@ async def run_flex_query(
                 ]
             
             if result.pnl_records:
-                response_data["pnl_summary"] = [
+                response_data["pnl_records"] = [
                     {
                         "symbol": p.symbol,
                         "realized_pnl": str(p.realized_pnl),
@@ -2369,14 +2372,14 @@ async def run_flex_query(
                 ]
             
             if result.cash_transactions:
-                response_data["cash_transactions_summary"] = [
+                response_data["cash_transactions"] = [
                     {
                         "transaction_id": ct.transaction_id,
-                        "date": ct.date.isoformat(),
+                        "transaction_date": ct.transaction_date.isoformat(),
                         "description": ct.description,
                         "amount": str(ct.amount),
                         "balance": str(ct.balance),
-                        "type": ct.type,
+                        "transaction_type": ct.transaction_type,
                     }
                     for ct in result.cash_transactions[:20]
                 ]
