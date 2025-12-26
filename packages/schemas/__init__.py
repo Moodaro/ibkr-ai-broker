@@ -42,6 +42,13 @@ from .flex_query import (
     RealizedPnL,
     TradeConfirmation,
 )
+from .order_cancel import (
+    CancelExecutionRequest,
+    CancelExecutionResponse,
+    OrderCancelIntent,
+    OrderCancelRequest,
+    OrderCancelResponse,
+)
 
 __all__ = [
     # Approval system
@@ -79,4 +86,10 @@ __all__ = [
     "FlexQueryType",
     "RealizedPnL",
     "TradeConfirmation",
+    # Order cancellation
+    "CancelExecutionRequest",
+    "CancelExecutionResponse",
+    "OrderCancelIntent",
+    "OrderCancelRequest",
+    "OrderCancelResponse",
 ]

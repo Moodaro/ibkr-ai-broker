@@ -153,9 +153,28 @@ class InstrumentResolveSchema(StrictBaseModel):
     symbol: str = Field(..., min_length=1, max_length=50, description="Instrument symbol")
 
 
+class RequestCancelSchema(StrictBaseModel):
+    """Schema for request_cancel tool (GATED write tool)."""
+    account_id: str = Field(..., min_length=1, max_length=100, description="Account identifier")
+    proposal_id: Optional[str] = Field(None, min_length=1, max_length=100, description="Proposal ID to cancel")
+    broker_order_id: Optional[str] = Field(None, min_length=1, max_length=100, description="Broker order ID to cancel")
+    reason: str = Field(..., min_length=10, max_length=500, description="Reason for cancellation")
+    
+    @field_validator("proposal_id", "broker_order_id", mode="after")
+    @classmethod
+    def validate_at_least_one_id(cls, v, info):
+        """Ensure at least one of proposal_id or broker_order_id is provided."""
+        if info.field_name == "broker_order_id":  # Check at the end
+            proposal_id = info.data.get("proposal_id")
+            if not proposal_id and not v:
+                raise ValueError("Either proposal_id or broker_order_id must be provided")
+        return v
+
+
 # Schema registry: maps tool names to their validation schemas
 TOOL_SCHEMAS = {
     "request_approval": RequestApprovalSchema,
+    "request_cancel": RequestCancelSchema,
     "get_portfolio": GetPortfolioSchema,
     "get_positions": GetPositionsSchema,
     "get_cash": GetCashSchema,

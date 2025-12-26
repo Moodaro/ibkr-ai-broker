@@ -37,6 +37,13 @@ class EventType(str, Enum):
     ORDER_FILLED = "OrderFilled"
     ORDER_CANCELLED = "OrderCancelled"
     ORDER_REJECTED = "OrderRejected"
+    
+    # Order Cancel Events
+    ORDER_CANCEL_REQUESTED = "OrderCancelRequested"
+    ORDER_CANCEL_APPROVED = "OrderCancelApproved"
+    ORDER_CANCEL_DENIED = "OrderCancelDenied"
+    ORDER_CANCEL_EXECUTED = "OrderCancelExecuted"
+    ORDER_CANCEL_FAILED = "OrderCancelFailed"
 
     # System Events
     SYSTEM_STARTED = "SystemStarted"
