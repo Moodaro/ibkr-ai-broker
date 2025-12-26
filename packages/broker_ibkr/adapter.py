@@ -139,6 +139,21 @@ class BrokerAdapter(Protocol):
             ValueError: If order ID is invalid.
         """
         ...
+
+    def cancel_order(self, broker_order_id: str) -> bool:
+        """Cancel order on broker.
+
+        Args:
+            broker_order_id: Broker's order identifier to cancel.
+
+        Returns:
+            True if cancellation request was successful.
+
+        Raises:
+            ValueError: If order ID is invalid or order cannot be cancelled.
+            ConnectionError: If broker connection fails.
+        """
+        ...
     
     def get_market_snapshot_v2(
         self,

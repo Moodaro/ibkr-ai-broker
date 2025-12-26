@@ -269,6 +269,42 @@ class FakeBrokerAdapter:
         ]
 
         return filled_order
+    
+    def cancel_order(self, broker_order_id: str) -> bool:
+        """Cancel order in mock broker.
+        
+        Args:
+            broker_order_id: Broker's order identifier to cancel.
+            
+        Returns:
+            True if cancellation was successful.
+            
+        Raises:
+            ValueError: If order not found or cannot be cancelled.
+        """
+        order = self._submitted_orders.get(broker_order_id)
+        if order is None:
+            raise ValueError(f"Order {broker_order_id} not found")
+        
+        # Check if order can be cancelled
+        if order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED]:
+            raise ValueError(f"Order {broker_order_id} cannot be cancelled (status: {order.status})")
+        
+        # Create cancelled order (immutable update)
+        cancelled_order_data = order.model_dump()
+        cancelled_order_data["status"] = OrderStatus.CANCELLED
+        cancelled_order_data["updated_at"] = datetime.utcnow()
+        
+        cancelled_order = OpenOrder(**cancelled_order_data)
+        self._submitted_orders[broker_order_id] = cancelled_order
+        
+        # Update open orders list (remove cancelled order)
+        self._open_orders = [
+            o for o in self._open_orders if o.broker_order_id != broker_order_id
+        ]
+        
+        return True
+
     def _create_mock_positions(self) -> list[Position]:
         """Create mock positions."""
         return [

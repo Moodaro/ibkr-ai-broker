@@ -397,6 +397,54 @@ class IBKRBrokerAdapter(BrokerAdapter):
         
         raise ValueError(f"Order {broker_order_id} not found")
     
+    def cancel_order(self, broker_order_id: str) -> bool:
+        """Cancel order on broker.
+        
+        Args:
+            broker_order_id: Broker's order identifier to cancel.
+            
+        Returns:
+            True if cancellation request was successful.
+            
+        Raises:
+            ValueError: If order ID is invalid or order cannot be cancelled.
+            ConnectionError: If broker connection fails.
+        """
+        if not self.is_connected():
+            raise ConnectionError("Not connected to IBKR")
+        
+        if self.config.readonly_mode:
+            raise PermissionError("Cannot cancel orders in read-only mode")
+        
+        # Find order in active trades
+        trades = self.ib.trades()
+        target_trade = None
+        
+        for trade in trades:
+            if str(trade.order.orderId) == broker_order_id:
+                target_trade = trade
+                break
+        
+        if not target_trade:
+            raise ValueError(f"Order {broker_order_id} not found or not active")
+        
+        # Check if order can be cancelled
+        status_str = target_trade.orderStatus.status.lower()
+        if status_str in ["filled", "cancelled"]:
+            raise ValueError(f"Order {broker_order_id} cannot be cancelled (status: {status_str})")
+        
+        # Cancel order
+        self.ib.cancelOrder(target_trade.order)
+        self.ib.sleep(1)  # Wait for cancellation acknowledgment
+        
+        logger.info(
+            "order_cancelled",
+            broker_order_id=broker_order_id,
+            status=status_str
+        )
+        
+        return True
+    
     def get_market_snapshot_v2(
         self,
         instrument: str,
