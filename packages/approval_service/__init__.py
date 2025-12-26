@@ -127,6 +127,7 @@ class ApprovalService:
         proposal_id: str,
         feature_flags=None,
         kill_switch=None,
+        policy_checker=None,
         current_time: Optional[datetime] = None
     ) -> tuple[OrderProposal, Optional[ApprovalToken]]:
         """
@@ -137,6 +138,7 @@ class ApprovalService:
         2. notional <= feature_flags.auto_approval_max_notional
         3. kill_switch.is_enabled() == False
         4. proposal.state == RISK_APPROVED
+        5. policy_checker.check_all() passes (if provided)
         
         If auto-approval eligible:
             - Transitions directly to APPROVAL_GRANTED
@@ -151,6 +153,7 @@ class ApprovalService:
             proposal_id: ID of proposal to request approval for
             feature_flags: FeatureFlags instance (optional, for auto-approval check)
             kill_switch: KillSwitch instance (optional, for auto-approval check)
+            policy_checker: PolicyChecker instance (optional, for advanced policy checks)
             current_time: Current time (defaults to now UTC)
             
         Returns:
@@ -175,21 +178,62 @@ class ApprovalService:
         
         # Check auto-approval eligibility
         auto_approved = False
+        approval_reason = "Manual approval required"
+        
         if feature_flags is not None and kill_switch is not None:
             if (
                 feature_flags.auto_approval
                 and not kill_switch.is_enabled()
             ):
-                # Parse simulation JSON to get notional
+                # Parse intent and simulation JSON
                 try:
+                    intent_data = json.loads(proposal.intent_json)
                     simulation_data = json.loads(proposal.simulation_json)
                     notional = Decimal(str(simulation_data.get("gross_notional", "0")))
                     
+                    # Notional threshold check
                     if notional <= Decimal(str(feature_flags.auto_approval_max_notional)):
-                        auto_approved = True
-                except (json.JSONDecodeError, KeyError, ValueError):
+                        # Check policy (if provided)
+                        if policy_checker is not None:
+                            from packages.approval_service.policy import DayOfWeek
+                            
+                            # Extract intent fields for policy check
+                            symbol = intent_data.get("symbol", "")
+                            sec_type = intent_data.get("sec_type", "STK")
+                            side = intent_data.get("side", "")
+                            order_type = intent_data.get("order_type", "")
+                            
+                            # Get current time and day for time window check
+                            current_day = DayOfWeek[current_time.strftime("%A").upper()]
+                            current_time_of_day = current_time.time()
+                            
+                            # Run all policy checks
+                            policy_ok, policy_reasons = policy_checker.check_all(
+                                symbol=symbol,
+                                sec_type=sec_type,
+                                side=side,
+                                order_type=order_type,
+                                notional=float(notional),
+                                current_time=current_time_of_day,
+                                current_day=current_day,
+                                portfolio_nav=None,  # TODO: pass portfolio NAV if available
+                            )
+                            
+                            if policy_ok:
+                                auto_approved = True
+                                approval_reason = "Auto-approved (below threshold, policy passed)"
+                            else:
+                                approval_reason = f"Policy check failed: {', '.join(policy_reasons)}"
+                        else:
+                            # No policy checker = only notional check
+                            auto_approved = True
+                            approval_reason = "Auto-approved (below threshold)"
+                    else:
+                        approval_reason = f"Notional ${notional} exceeds threshold ${feature_flags.auto_approval_max_notional}"
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
                     # If we can't parse, fall back to manual approval
                     auto_approved = False
+                    approval_reason = f"Parse error: {str(e)}"
         
         if auto_approved:
             # Auto-approve: generate token and transition to APPROVAL_GRANTED
@@ -199,13 +243,16 @@ class ApprovalService:
             updated = proposal.with_state(
                 OrderState.APPROVAL_GRANTED,
                 approval_token=token.token_id,
-                approval_reason="Auto-approved (below threshold)"
+                approval_reason=approval_reason
             )
             self.update_proposal(updated)
             return updated, token
         else:
             # Manual approval required
-            updated = proposal.with_state(OrderState.APPROVAL_REQUESTED)
+            updated = proposal.with_state(
+                OrderState.APPROVAL_REQUESTED,
+                approval_reason=approval_reason
+            )
             self.update_proposal(updated)
             return updated, None
     

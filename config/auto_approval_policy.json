@@ -1,0 +1,61 @@
+{
+  "enabled": true,
+  "symbol_whitelist": [
+    "SPY",
+    "QQQ",
+    "VTI",
+    "AGG",
+    "BND",
+    "AAPL",
+    "MSFT",
+    "GOOGL"
+  ],
+  "symbol_blacklist": [
+    "TSLA",
+    "GME",
+    "AMC"
+  ],
+  "allowed_sec_types": [
+    "STK",
+    "ETF"
+  ],
+  "time_windows": [
+    {
+      "start_time": "09:30:00",
+      "end_time": "16:00:00",
+      "days": [
+        "MONDAY",
+        "TUESDAY",
+        "WEDNESDAY",
+        "THURSDAY",
+        "FRIDAY"
+      ],
+      "timezone": "America/New_York"
+    }
+  ],
+  "allowed_order_types": [
+    "MKT",
+    "LMT"
+  ],
+  "dca_schedules": [
+    {
+      "symbols": [
+        "SPY",
+        "QQQ"
+      ],
+      "max_order_size": 200.0,
+      "side": "BUY",
+      "order_type": "MKT"
+    },
+    {
+      "symbols": [
+        "VTI",
+        "AGG"
+      ],
+      "max_order_size": 150.0,
+      "side": "BUY",
+      "order_type": "MKT"
+    }
+  ],
+  "max_position_pct": 5.0
+}

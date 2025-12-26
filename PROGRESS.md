@@ -56,7 +56,7 @@
 - Kill switch integration (blocks cancel/modify when active)
 - **Tests**: 31 passing (19 cancel + 12 modify)
 
-### Epic G — Auto-Approval Strategies ✅ (just completed)
+### Epic G — Auto-Approval Strategies ✅ (completed 26/12/2025)
 - Auto-approval logic in ApprovalService.request_approval()
 - Feature flags: auto_approval (bool), auto_approval_max_notional (float, default $1000)
 - Kill switch integration (auto-approval blocked when active)
@@ -66,6 +66,14 @@
 - **Tests**: 14 passing (edge cases, thresholds, kill switch)
 - **Total approval tests**: 33 passing (19 approval_service + 14 auto_approval)
 
+**Advanced Policy System (26/12/2025):**
+- AutoApprovalPolicy schema with 6 rule categories
+- PolicyChecker.check_all() validates: symbol whitelist/blacklist, security types, time windows, order types, DCA schedules, position size limits
+- Integration in ApprovalService (optional policy_checker parameter)
+- Configuration file: config/auto_approval_policy.json
+- **Tests**: 36 passing (27 policy unit + 9 integration)
+- **Total auto-approval tests**: 69 passing (33 basic + 27 policy + 9 integration)
+
 ---
 
 ## 📊 Test Coverage Summary
@@ -73,7 +81,9 @@
 | Module | Tests | Status |
 |--------|-------|--------|
 | Approval Service | 19 | ✅ Passing |
-| Auto-Approval | 14 | ✅ Passing |
+| Auto-Approval Basic | 14 | ✅ Passing |
+| Auto-Approval Policy | 27 | ✅ Passing |
+| Auto-Approval Integration | 9 | ✅ Passing |
 | IBKR Adapter | 21 | ✅ Passing |
 | Market Data | 25 | ✅ Passing |
 | Instrument Resolution | 47 | ✅ Passing |
@@ -87,7 +97,7 @@
 | Performance Monitor | 21 | ✅ Passing |
 | Order History | 24 | ✅ Passing |
 | MCP Security | 15 | ✅ Passing |
-| **TOTAL** | **430+** | **✅ 100%** |
+| **TOTAL** | **466+** | **✅ 100%** |
 
 ---
 
@@ -217,12 +227,16 @@ RATE_LIMIT_GLOBAL=1000  # per minute
 
 ### Prioritized Enhancements
 
-#### 1. Advanced Auto-Approval Policies (Optional)
-- AutoApprovalPolicy schema (ETF whitelist, DCA schedules, time windows)
-- Policy-based filtering beyond notional threshold
-- Symbol whitelists (SPY, QQQ, etc.)
-- Time window restrictions (market hours only)
-- DCA pattern detection
+#### 1. Advanced Auto-Approval Policies ✅ (COMPLETED 26/12/2025)
+- ✅ AutoApprovalPolicy schema (ETF whitelist, DCA schedules, time windows)
+- ✅ Policy-based filtering beyond notional threshold
+- ✅ Symbol whitelists (SPY, QQQ, etc.)
+- ✅ Time window restrictions (market hours only)
+- ✅ DCA pattern detection
+- ✅ Security type restrictions
+- ✅ Position size limits (% of portfolio NAV)
+- ✅ 36 comprehensive tests (27 policy + 9 integration)
+- ✅ Configuration file: config/auto_approval_policy.json
 
 #### 2. Live Trading Preparation (High Priority)
 - Multi-environment configuration (dev → paper → live)

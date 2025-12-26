@@ -331,35 +331,71 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 - 14 comprehensive tests covering all scenarios (edge cases, thresholds, kill switch, invalid states)
 - Backward compatible: optional parameters, existing tests passing (19/19 approval_service tests)
 
+**Advanced Policy System (26/12/2025):**
+- AutoApprovalPolicy schema with Pydantic validation
+- PolicyChecker with 6 rule categories:
+  1. Symbol whitelist/blacklist (per-symbol control)
+  2. Security type restrictions (STK, ETF, FUT, OPT, FX, CRYPTO)
+  3. Time window restrictions (market hours, days of week, timezone)
+  4. Order type restrictions (MKT, LMT, STP, STP_LMT)
+  5. DCA schedules (symbol-specific size limits)
+  6. Position size limits (% of portfolio NAV)
+- PolicyChecker.check_all() validates all rules, returns (passed, reasons)
+- Integration in ApprovalService.request_approval() with optional policy_checker parameter
+- Configuration file: config/auto_approval_policy.json with example policy
+- 27 policy unit tests + 9 integration tests = 36 policy tests passing
+- Total auto-approval tests: 69 passing (33 basic + 27 policy + 9 integration)
+
 **Auto-approval conditions** (all must be true):
 1. feature_flags.auto_approval == True
 2. notional <= feature_flags.auto_approval_max_notional
 3. kill_switch.is_enabled() == False
 4. proposal.state == RISK_APPROVED
+5. policy_checker.check_all() passes (if provided)
 
-**Test coverage**: 14/14 passing
-- Auto-approve below threshold ($500 < $1000)
-- Manual above threshold ($5000 > $1000)
-- Kill switch blocks auto-approval
-- Feature flag disabled requires manual
-- Token valid and consumable
-- Custom threshold ($2000)
-- Exactly at threshold ($1000 == $1000)
-- Missing notional field fallback
-- Invalid JSON fallback
-- RISK_REJECTED raises ValueError
-- Very small notional ($0.01)
-- Zero threshold ($0) blocks all
+**Test coverage**: 69/69 passing
+- 19 approval_service (backward compat)
+- 14 auto-approval basic (thresholds, kill switch, edge cases)
+- 27 policy unit tests (whitelist, time windows, DCA, position %)
+- 9 integration tests (ApprovalService + PolicyChecker)
 
 **Environment variables**:
 - AUTO_APPROVAL=true (default: false)
 - AUTO_APPROVAL_MAX_NOTIONAL=1000 (default: 1000.0)
+- AUTO_APPROVAL_POLICY_PATH=./config/auto_approval_policy.json (optional)
+
+**Policy Configuration Example** (config/auto_approval_policy.json):
+```json
+{
+  "enabled": true,
+  "symbol_whitelist": ["SPY", "QQQ", "VTI", "AGG"],
+  "symbol_blacklist": ["TSLA", "GME"],
+  "allowed_sec_types": ["STK", "ETF"],
+  "time_windows": [{
+    "start_time": "09:30:00",
+    "end_time": "16:00:00",
+    "days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "timezone": "America/New_York"
+  }],
+  "allowed_order_types": ["MKT", "LMT"],
+  "dca_schedules": [{
+    "symbols": ["SPY", "QQQ"],
+    "max_order_size": 200.0,
+    "side": "BUY",
+    "order_type": "MKT"
+  }],
+  "max_position_pct": 5.0
+}
+```
 
 **Examples**:
-* ETF rebalance with $500 notional → auto-approved
-* DCA weekly $200 → auto-approved
-* Large trade $5000 → manual approval required
-* Kill switch active → all manual, including small trades
+* ETF rebalance SPY $500 @ 10 AM Monday → auto-approved ✅
+* DCA weekly QQQ $150 → auto-approved (DCA schedule) ✅
+* Large trade $5000 → manual approval required (exceeds threshold) ⏳
+* Non-whitelisted AAPL $500 → manual approval (not in whitelist) ⏳
+* Weekend SPY order → manual approval (outside time window) ⏳
+* Options trade → manual approval (sec_type not allowed) ⏳
+* Kill switch active → all manual, including small trades 🛑
 
 ---
 
