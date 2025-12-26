@@ -1,6 +1,6 @@
 {
   "enabled": false,
-  "activated_at": "2025-12-25T06:34:40.838879+00:00",
-  "activated_by": "api",
-  "reason": "Manual activation via API"
+  "activated_at": "2025-12-26T11:56:09.381331+00:00",
+  "activated_by": "test",
+  "reason": "Testing"
 }

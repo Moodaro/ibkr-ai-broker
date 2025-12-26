@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
@@ -216,6 +216,23 @@ app = FastAPI(
 
 # Add correlation ID middleware
 app.add_middleware(CorrelationIdMiddleware)
+
+
+# ===== Dependency Injection =====
+
+def get_broker() -> BrokerAdapter:
+    """Dependency to get broker adapter instance.
+    
+    This allows tests to override the broker using FastAPI dependency overrides.
+    If broker is not yet initialized (e.g., during app startup or in tests),
+    creates a new adapter instance.
+    """
+    global broker
+    if broker is None:
+        # Lazy initialization for tests or early startup
+        from packages.broker_ibkr.factory import get_broker_adapter
+        broker = get_broker_adapter()
+    return broker
 
 
 @app.exception_handler(ValidationError)
@@ -1998,12 +2015,13 @@ async def check_performance_degradation(operation_name: str, window_minutes: int
 # ===== Market Data Endpoints =====
 
 @app.get("/api/v1/market/snapshot")
-async def get_market_snapshot(instrument: str, fields: Optional[str] = None):
+async def get_market_snapshot(
+    instrument: str,
+    fields: Optional[str] = None,
+    broker: BrokerAdapter = Depends(get_broker)
+):
     """Get current market snapshot for an instrument."""
     try:
-        if broker is None:
-            raise HTTPException(status_code=500, detail="Broker not initialized")
-        
         # Parse fields if provided
         fields_list = fields.split(",") if fields else None
         
@@ -2056,13 +2074,11 @@ async def get_market_bars(
     start: Optional[str] = None,
     end: Optional[str] = None,
     limit: int = 100,
-    rth_only: bool = True
+    rth_only: bool = True,
+    broker: BrokerAdapter = Depends(get_broker)
 ):
     """Get historical OHLCV bars for an instrument."""
     try:
-        if broker is None:
-            raise HTTPException(status_code=500, detail="Broker not initialized")
-        
         # Parse optional datetime strings
         from datetime import datetime
         start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')) if start else None
@@ -2139,7 +2155,8 @@ async def search_instruments(
     type: Optional[str] = None,
     exchange: Optional[str] = None,
     currency: Optional[str] = None,
-    limit: int = 10
+    limit: int = 10,
+    broker: BrokerAdapter = Depends(get_broker)
 ):
     """Search for instruments by symbol or name.
     
@@ -2154,9 +2171,6 @@ async def search_instruments(
         List of search candidates with match scores
     """
     try:
-        if broker is None:
-            raise HTTPException(status_code=500, detail="Broker not initialized")
-        
         # Validate limit
         if limit < 1 or limit > 100:
             raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
@@ -2235,7 +2249,8 @@ async def resolve_instrument(
     type: Optional[str] = None,
     exchange: Optional[str] = None,
     currency: Optional[str] = None,
-    con_id: Optional[int] = None
+    con_id: Optional[int] = None,
+    broker: BrokerAdapter = Depends(get_broker)
 ):
     """Resolve instrument symbol to exact IBKR contract.
     
@@ -2250,9 +2265,6 @@ async def resolve_instrument(
         Fully resolved InstrumentContract or error with alternatives if ambiguous
     """
     try:
-        if broker is None:
-            raise HTTPException(status_code=500, detail="Broker not initialized")
-        
         # Validate symbol
         if not symbol or not symbol.strip():
             raise HTTPException(status_code=400, detail="Symbol is required")

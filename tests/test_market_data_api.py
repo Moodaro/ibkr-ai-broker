@@ -116,17 +116,40 @@ class TestFakeBrokerAdapterMarketData:
 class TestMarketDataAPIEndpoints:
     """Test market data API endpoints."""
     
-    @pytest.fixture
+    @pytest.fixture(scope="function", autouse=False)
     def client(self):
-        """Create test client."""
-        from apps.assistant_api.main import app
+        """Create test client with dependency override and disabled lifespan."""
+        import os
+        from apps.assistant_api.main import app, get_broker
         from apps.assistant_api import main
-        from packages.broker_ibkr.factory import get_broker_adapter
+        from packages.broker_ibkr.factory import get_broker_adapter, BrokerType
         
-        # Initialize broker for API endpoints
-        main.broker = get_broker_adapter()
+        # Save original broker state and env
+        original_broker = main.broker
+        original_env = os.environ.get("BROKER_TYPE")
         
-        return TestClient(app)
+        # Force FAKE broker for tests (lowercase as per factory)
+        os.environ["BROKER_TYPE"] = "fake"
+        
+        # Create broker instance for testing
+        test_broker = get_broker_adapter(broker_type=BrokerType.FAKE)
+        
+        # Override both dependency and global
+        app.dependency_overrides[get_broker] = lambda: test_broker
+        main.broker = test_broker
+        
+        # Create client without lifespan to avoid interference
+        from fastapi.testclient import TestClient
+        with TestClient(app, backend_options={"use_uvloop": False}) as client:
+            yield client
+        
+        # Cleanup: remove override and restore original state
+        app.dependency_overrides.clear()
+        main.broker = original_broker
+        if original_env is None:
+            os.environ.pop("BROKER_TYPE", None)
+        else:
+            os.environ["BROKER_TYPE"] = original_env
     
     def test_get_market_snapshot_success(self, client):
         """Test getting market snapshot."""
