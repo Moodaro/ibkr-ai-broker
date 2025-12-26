@@ -1,12 +1,15 @@
 """Risk Engine for evaluating trade proposals.
 
 This module implements the deterministic risk gate that evaluates
-every order proposal against policy rules (R1-R8).
+every order proposal against policy rules (R1-R12).
+
+Rules R1-R8: Basic risk checks
+Rules R9-R12: Advanced risk checks (volatility, drawdown, time-of-day)
 """
 
 from datetime import datetime, time
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from packages.broker_ibkr import Portfolio
 from packages.broker_ibkr.models import OrderSide
@@ -15,9 +18,12 @@ from packages.trade_sim import SimulationResult, SimulationStatus
 
 from .models import Decision, RiskDecision, RiskLimits, TradingHours
 
+if TYPE_CHECKING:
+    from .advanced import AdvancedRiskEngine, VolatilityMetrics
+
 
 class RiskEngine:
-    """Risk gate that evaluates orders against policy rules."""
+    """Risk gate that evaluates orders against policy rules (R1-R12)."""
 
     def __init__(
         self,
@@ -25,6 +31,7 @@ class RiskEngine:
         trading_hours: TradingHours,
         daily_trades_count: int = 0,
         daily_pnl: Decimal = Decimal("0"),
+        advanced_engine: Optional["AdvancedRiskEngine"] = None,
     ):
         """
         Initialize risk engine.
@@ -34,11 +41,14 @@ class RiskEngine:
             trading_hours: Trading hours configuration (R5).
             daily_trades_count: Current number of trades today (for R7).
             daily_pnl: Current P&L for today (for R8).
+            advanced_engine: Optional advanced risk engine for R9-R12 (volatility,
+                drawdown, time-of-day restrictions). If None, only R1-R8 are checked.
         """
         self.limits = limits
         self.trading_hours = trading_hours
         self.daily_trades_count = daily_trades_count
         self.daily_pnl = daily_pnl
+        self.advanced_engine = advanced_engine
 
     def evaluate(
         self,
@@ -46,18 +56,21 @@ class RiskEngine:
         portfolio: Portfolio,
         simulation: SimulationResult,
         current_time: Optional[datetime] = None,
+        volatility_metrics: Optional["VolatilityMetrics"] = None,
     ) -> RiskDecision:
         """
-        Evaluate order against all risk rules.
+        Evaluate order against all risk rules (R1-R12).
 
         Args:
             intent: Validated order intent.
             portfolio: Current portfolio state.
             simulation: Pre-trade simulation result.
-            current_time: Current time for R5 check (defaults to now).
+            current_time: Current time for R5/R12 checks (defaults to now).
+            volatility_metrics: Optional volatility data for R9 (volatility-aware sizing).
+                If provided and advanced_engine is configured, enables R9-R12 checks.
 
         Returns:
-            RiskDecision with APPROVE/REJECT/MANUAL_REVIEW.
+            RiskDecision with APPROVE/REJECT. Combines violations from R1-R8 and R9-R12.
         """
         if current_time is None:
             current_time = datetime.utcnow()
@@ -159,9 +172,38 @@ class RiskEngine:
                 f"Position size {metrics['position_pct']:.1f}% approaching limit {self.limits.max_position_pct}%"
             )
 
+        # R9-R12: Advanced risk checks (if configured)
+        if self.advanced_engine is not None:
+            advanced_decision = self.advanced_engine.evaluate_advanced(
+                intent=intent,
+                portfolio=portfolio,
+                simulation=simulation,
+                volatility_metrics=volatility_metrics,
+                current_time=current_time,
+            )
+            
+            # Merge violations from advanced rules
+            violated_rules.extend(advanced_decision.violated_rules)
+            
+            # Merge metrics
+            metrics.update(advanced_decision.metrics)
+            
+            # Merge warnings
+            warnings.extend(advanced_decision.warnings)
+            
+            # If advanced rules rejected, return rejection
+            if advanced_decision.decision == Decision.REJECT:
+                return RiskDecision(
+                    decision=Decision.REJECT,
+                    reason=f"{self._build_rejection_reason(violated_rules[:len(violated_rules)-len(advanced_decision.violated_rules)], metrics)}; {advanced_decision.reason}" if violated_rules[:len(violated_rules)-len(advanced_decision.violated_rules)] else advanced_decision.reason,
+                    violated_rules=violated_rules,
+                    warnings=warnings,
+                    metrics=metrics,
+                )
+
         return RiskDecision(
             decision=Decision.APPROVE,
-            reason="All risk checks passed",
+            reason="All risk checks passed (R1-R8" + (" + R9-R12)" if self.advanced_engine else ")"),
             violated_rules=[],
             warnings=warnings,
             metrics=metrics,

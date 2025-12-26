@@ -1,63 +1,203 @@
 {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP Tool Policy Configuration",
+  "description": "Security policy for MCP tool access control, rate limiting, and parameter validation",
+  
   "rules": [
     {
       "tool_name": "get_portfolio",
-      "action": "allow"
+      "action": "allow",
+      "description": "Read-only portfolio access",
+      "max_calls_per_session": null,
+      "allowed_sessions": [],
+      "denied_parameters": []
     },
     {
       "tool_name": "get_positions",
-      "action": "allow"
+      "action": "allow",
+      "description": "Read-only positions access",
+      "max_calls_per_session": null
     },
     {
       "tool_name": "get_cash",
-      "action": "allow"
+      "action": "allow",
+      "description": "Read-only cash balance access"
     },
     {
       "tool_name": "get_open_orders",
-      "action": "allow"
+      "action": "allow",
+      "description": "Read-only open orders access"
     },
     {
       "tool_name": "simulate_order",
-      "action": "allow"
+      "action": "allow",
+      "description": "Order simulation (safe, read-only)",
+      "max_calls_per_session": 200
     },
     {
       "tool_name": "evaluate_risk",
-      "action": "allow"
+      "action": "allow",
+      "description": "Risk evaluation (safe, read-only)",
+      "max_calls_per_session": 200
     },
     {
       "tool_name": "get_market_snapshot",
-      "action": "allow"
+      "action": "allow",
+      "description": "Market data snapshot (rate limited by exchange)",
+      "max_calls_per_session": 100
     },
     {
       "tool_name": "get_market_bars",
-      "action": "allow"
+      "action": "allow",
+      "description": "Historical bars data",
+      "max_calls_per_session": 50
     },
     {
       "tool_name": "instrument_search",
-      "action": "allow"
+      "action": "allow",
+      "description": "Instrument symbol search",
+      "max_calls_per_session": 50
     },
     {
       "tool_name": "instrument_resolve",
-      "action": "allow"
+      "action": "allow",
+      "description": "Resolve symbol to contract",
+      "max_calls_per_session": 100
     },
     {
       "tool_name": "list_flex_queries",
-      "action": "allow"
+      "action": "allow",
+      "description": "List Flex Query configurations"
     },
     {
       "tool_name": "run_flex_query",
       "action": "allow",
-      "max_calls_per_session": 10
+      "description": "Execute Flex Query (read-only, resource-intensive)",
+      "max_calls_per_session": 10,
+      "denied_parameters": []
     },
     {
       "tool_name": "request_approval",
       "action": "allow",
-      "max_calls_per_session": 50
+      "description": "Request order approval (gated write - requires human approval)",
+      "max_calls_per_session": 50,
+      "denied_parameters": [
+        "bypass_risk",
+        "skip_simulation",
+        "force_approval"
+      ]
     },
     {
       "tool_name": "request_cancel",
       "action": "allow",
-      "max_calls_per_session": 50
+      "description": "Request order cancellation (gated write - requires human approval)",
+      "max_calls_per_session": 20,
+      "denied_parameters": [
+        "force_cancel",
+        "bypass_approval"
+      ]
+    },
+    {
+      "tool_name": "submit_order",
+      "action": "deny",
+      "description": "Direct order submission FORBIDDEN - use request_approval instead",
+      "reason": "Human-only operation - requires approval token"
+    },
+    {
+      "tool_name": "grant_approval",
+      "action": "deny",
+      "description": "Grant approval FORBIDDEN",
+      "reason": "Human-only operation - dashboard/API only"
+    },
+    {
+      "tool_name": "deny_approval",
+      "action": "deny",
+      "description": "Deny approval FORBIDDEN",
+      "reason": "Human-only operation - dashboard/API only"
+    },
+    {
+      "tool_name": "activate_killswitch",
+      "action": "deny",
+      "description": "Activate kill switch FORBIDDEN",
+      "reason": "Human-only emergency operation"
+    },
+    {
+      "tool_name": "release_killswitch",
+      "action": "deny",
+      "description": "Release kill switch FORBIDDEN",
+      "reason": "Human-only operation after incident review"
     }
+  ],
+  
+  "default_action": "deny",
+  "default_reason": "Tool not in allowlist - fail-safe deny",
+  
+  "rate_limiting": {
+    "enabled": true,
+    "per_tool_calls_per_minute": 60,
+    "per_tool_calls_per_hour": 500,
+    "per_session_calls_per_minute": 100,
+    "per_session_calls_per_hour": 1000,
+    "global_calls_per_minute": 1000,
+    "global_calls_per_hour": 10000,
+    "circuit_breaker": {
+      "enabled": true,
+      "consecutive_rejection_threshold": 100,
+      "timeout_seconds": 300
+    }
+  },
+  
+  "output_redaction": {
+    "enabled": true,
+    "patterns": [
+      {
+        "name": "account_id",
+        "regex": "DU\\d{6,8}",
+        "replacement": "DU****{last2}",
+        "description": "IBKR account ID partial redaction"
+      },
+      {
+        "name": "api_token",
+        "regex": "[A-Za-z0-9]{32,}",
+        "replacement": "***",
+        "description": "API tokens and long keys"
+      },
+      {
+        "name": "email",
+        "regex": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+        "replacement": "***@***.***",
+        "description": "Email addresses"
+      }
+    ],
+    "sensitive_fields": [
+      "password",
+      "secret",
+      "token",
+      "api_key",
+      "access_token",
+      "refresh_token",
+      "private_key",
+      "ssn",
+      "tax_id"
+    ]
+  },
+  
+  "audit": {
+    "log_all_calls": true,
+    "log_rejected_calls": true,
+    "log_redacted_output": false,
+    "include_parameters": true,
+    "include_response": false
+  },
+  
+  "notes": [
+    "This is an EXAMPLE configuration. Copy to config/mcp_policy.json and customize.",
+    "Default action is DENY - all tools must be explicitly allowed (fail-safe).",
+    "Read-only tools have generous limits, write tools have strict limits.",
+    "Gated write tools (request_approval, request_cancel) require human approval.",
+    "Human-only tools (submit, grant, deny, killswitch) are denied in MCP.",
+    "Rate limits prevent DoS and accidental loops.",
+    "Circuit breaker stops cascading failures.",
+    "Output redaction prevents PII leakage in logs and responses."
   ]
 }

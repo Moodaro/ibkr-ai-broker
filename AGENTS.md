@@ -214,6 +214,201 @@ scheduler.stop(wait=True)  # wait for running jobs to complete
 - **6 fields**: `second minute hour day month weekday` (e.g., `0 0 9 * * *`)
 - Examples:
 
+### Advanced risk engine integration pattern (R9-R12)
+```python
+from packages.risk_engine import (
+    RiskEngine,
+    AdvancedRiskEngine,
+    AdvancedRiskLimits,
+    VolatilityMetrics,
+)
+
+# Initialize advanced risk engine with R9-R12 limits
+advanced_limits = AdvancedRiskLimits(
+    # R9: Volatility-aware position sizing
+    max_position_volatility=0.02,  # 2% max portfolio risk per position
+    min_position_size=Decimal("100"),
+    max_position_size=Decimal("50000"),
+    volatility_scaling_enabled=True,
+    
+    # R10: Correlation limits (placeholder, not yet implemented)
+    max_correlation_exposure=0.50,
+    correlation_enabled=False,
+    
+    # R11: Drawdown protection
+    max_drawdown_pct=10.0,  # Halt trading if 10% drawdown
+    enable_drawdown_halt=True,
+    
+    # R12: Time-of-day restrictions
+    avoid_market_open_minutes=10,  # Skip first 10 min
+    avoid_market_close_minutes=10,  # Skip last 10 min
+)
+
+advanced_engine = AdvancedRiskEngine(
+    limits=advanced_limits,
+    high_water_mark=portfolio.total_value,  # Track HWM for drawdown
+    market_open_time="09:30",
+    market_close_time="16:00",
+)
+
+# Integrate with basic RiskEngine (R1-R8)
+engine = RiskEngine(
+    limits=basic_limits,  # R1-R8 configuration
+    trading_hours=trading_hours,
+    advanced_engine=advanced_engine,  # Optional: None for R1-R8 only
+)
+
+# Evaluate with volatility data
+volatility_metrics = VolatilityMetrics(
+    symbol_volatility=0.15,  # 15% annual volatility for symbol
+    beta=1.2,                # Optional: beta vs market
+    market_volatility=0.18,  # Optional: market volatility
+)
+
+decision = engine.evaluate(
+    intent=intent,
+    portfolio=portfolio,
+    simulation=simulation,
+    current_time=datetime.now(tz=timezone.utc),
+    volatility_metrics=volatility_metrics,  # Optional: None skips R9
+)
+
+# Check result
+if decision.decision == Decision.REJECT:
+    # R1-R8 or R9-R12 rejected
+    violated = ", ".join(decision.violated_rules)
+    print(f"REJECTED: {decision.reason} (rules: {violated})")
+else:
+    # All checks passed
+    print(f"APPROVED: {decision.reason}")
+    print(f"Metrics: {decision.metrics}")
+```
+
+**Backward Compatibility**:
+```python
+# Works without advanced engine (R1-R8 only)
+basic_engine = RiskEngine(
+    limits=basic_limits,
+    trading_hours=trading_hours,
+    # advanced_engine=None by default
+)
+
+decision = basic_engine.evaluate(
+    intent=intent,
+    portfolio=portfolio,
+    simulation=simulation,
+    # volatility_metrics not needed
+)
+```
+
+**Configuration** (risk_policy.yml):
+```yaml
+advanced_rules:
+  volatility_sizing:
+    enabled: true
+    max_position_volatility: 0.02
+    min_position_size: 100.00
+    max_position_size: 50000.00
+  
+  drawdown_protection:
+    enabled: true
+    max_drawdown_pct: 10.0
+    enable_drawdown_halt: true
+  
+  time_restrictions:
+    enabled: true
+    avoid_market_open_minutes: 10
+    avoid_market_close_minutes: 10
+```
+
+### Volatility data provider pattern
+```python
+from packages.volatility_provider import (
+    MockVolatilityProvider,
+    HistoricalVolatilityProvider,
+    VolatilityService,
+)
+from packages.broker_ibkr import FakeBrokerAdapter, IBKRBrokerAdapter
+
+# Option 1: Mock provider (for testing)
+mock_provider = MockVolatilityProvider(
+    volatility_map={
+        "AAPL": 0.18,  # 18%
+        "TSLA": 0.50,  # 50%
+    },
+    default_volatility=0.20,  # 20% for unknown symbols
+    market_volatility=0.15,  # 15% VIX equivalent
+)
+
+vol_data = mock_provider.get_volatility("AAPL")
+print(f"AAPL volatility: {vol_data.realized_volatility}")  # 0.18
+
+# Option 2: Historical provider (production)
+broker = IBKRBrokerAdapter()
+historical_provider = HistoricalVolatilityProvider(
+    broker_adapter=broker,
+    annualization_factor=252,  # Trading days per year
+)
+
+vol_data = historical_provider.get_volatility("AAPL", lookback_days=30)
+# Calculates realized volatility from last 30 days of price data
+
+# Option 3: Service with caching and fallback
+vol_service = VolatilityService(
+    primary_provider=historical_provider,
+    fallback_provider=mock_provider,
+    cache_ttl_seconds=3600,  # 1 hour cache
+)
+
+# Fetches from primary, falls back to mock if unavailable, caches result
+vol_data = vol_service.get_volatility("AAPL")
+
+# Check cache stats
+stats = vol_service.get_cache_stats()
+print(f"Cache hit rate: {stats['hit_rate_pct']}%")
+print(f"Fallback uses: {stats['fallback_uses']}")
+
+# Convert to VolatilityMetrics for RiskEngine
+from packages.risk_engine import VolatilityMetrics
+
+volatility_metrics = VolatilityMetrics(
+    symbol_volatility=vol_data.realized_volatility,
+    market_volatility=vol_data.market_volatility,
+    beta=vol_data.beta,
+)
+
+# Use with RiskEngine (R9 volatility-aware sizing)
+decision = risk_engine.evaluate(
+    intent=intent,
+    portfolio=portfolio,
+    simulation=simulation,
+    volatility_metrics=volatility_metrics,  # Enables R9 check
+)
+```
+
+**Configuration** (risk_policy.yml):
+```yaml
+volatility_provider:
+  provider_type: "historical"  # or "mock" for testing
+  fallback_provider: "mock"
+  fallback_default_volatility: 0.25
+  
+  cache_enabled: true
+  cache_ttl_seconds: 3600  # 1 hour
+  
+  historical:
+    lookback_days: 30
+    annualization_factor: 252
+    min_data_points: 10
+  
+  mock:
+    default_volatility: 0.20
+    market_volatility: 0.15
+    symbol_overrides:
+      AAPL: 0.18
+      TSLA: 0.50
+```
+
 ### MCP parameter validation pattern
 ```python
 from packages.mcp_security import validate_schema
