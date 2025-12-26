@@ -34,6 +34,14 @@ class RequestApprovalSchema(StrictBaseModel):
         if v is None:
             return v
         return Decimal(str(v))
+    
+    @field_validator("quantity", "market_price", "limit_price", mode="after")
+    @classmethod
+    def validate_positive(cls, v):
+        """Ensure quantity/prices are positive."""
+        if v is not None and v <= 0:
+            raise ValueError("must be greater than 0")
+        return v
 
 
 class GetPortfolioSchema(StrictBaseModel):
@@ -68,6 +76,14 @@ class SimulateOrderSchema(StrictBaseModel):
         if v is None:
             return v
         return Decimal(str(v))
+    
+    @field_validator("quantity", "market_price", "limit_price", mode="after")
+    @classmethod
+    def validate_positive(cls, v):
+        """Ensure quantity/prices are positive."""
+        if v is not None and v <= 0:
+            raise ValueError("must be greater than 0")
+        return v
 
 
 class EvaluateRiskSchema(StrictBaseModel):
@@ -87,6 +103,14 @@ class EvaluateRiskSchema(StrictBaseModel):
         if v is None:
             return v
         return Decimal(str(v))
+    
+    @field_validator("quantity", "market_price", "limit_price", mode="after")
+    @classmethod
+    def validate_positive(cls, v):
+        """Ensure quantity/prices are positive."""
+        if v is not None and v <= 0:
+            raise ValueError("must be greater than 0")
+        return v
 
 
 class ListFlexQueriesSchema(StrictBaseModel):
