@@ -32,6 +32,7 @@ class EventType(str, Enum):
     APPROVAL_REQUESTED = "ApprovalRequested"
     APPROVAL_GRANTED = "ApprovalGranted"
     APPROVAL_DENIED = "ApprovalDenied"
+    AUTO_APPROVAL_GRANTED = "AutoApprovalGranted"  # Auto-approval below threshold
     ORDER_SUBMITTED = "OrderSubmitted"
     ORDER_CONFIRMED = "OrderConfirmed"
     ORDER_FILLED = "OrderFilled"

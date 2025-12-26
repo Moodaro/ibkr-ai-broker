@@ -1,6 +1,6 @@
 # Roadmap IBKR Paper→Live + Assistente LLM + MCP (v2)
 
-> **Stato**: Sprint 0–11 completati (25 dicembre 2025). Epic A, B, C completati (25 dicembre 2025). Real IBKR connectivity implementato con fallback graceful. Prossimi upgrade: hardening production, live trading preparation, advanced features.
+> **Stato**: Sprint 0–11 completati (25 dicembre 2025). Epic A, B, C, D, E, F, G completati (26 dicembre 2025). Real IBKR connectivity implementato con fallback graceful. Auto-approval strategies implementate. Prossimi upgrade: advanced strategies, live trading preparation, production hardening.
 > 
 > **Filosofia invariata**: *LLM propone* → *simulazione* → *risk gate deterministico* → *approvazione umana/token* → *submit* → *audit end-to-end*.
 
@@ -319,19 +319,47 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ---
 
-### Epic G — Strategy "banali" (Policy Auto-Commit controllate)
+### Epic G — Strategy "banali" (Policy Auto-Commit controllate) ✅ (26/12/2025)
 
-**Perché**: portare valore reale senza scalping.
+**Implementazione completata:**
+- Auto-approval logic in ApprovalService.request_approval()
+- Feature flags: auto_approval (bool), auto_approval_max_notional (float, default $1000)
+- Kill switch integration: auto-approval blocked when kill_switch.is_enabled()
+- Return type: tuple[OrderProposal, Optional[ApprovalToken]] (token = auto-approved, None = manual)
+- MCP + API integration: handle_request_approval() dual response (AUTO_APPROVED vs APPROVAL_REQUESTED)
+- Audit event: AUTO_APPROVAL_GRANTED for tracking
+- 14 comprehensive tests covering all scenarios (edge cases, thresholds, kill switch, invalid states)
+- Backward compatible: optional parameters, existing tests passing (19/19 approval_service tests)
 
-**Esempi**
+**Auto-approval conditions** (all must be true):
+1. feature_flags.auto_approval == True
+2. notional <= feature_flags.auto_approval_max_notional
+3. kill_switch.is_enabled() == False
+4. proposal.state == RISK_APPROVED
 
-* Rebalance mensile ETF entro 0.5% NAV per trade
-* DCA programmato con size minima
+**Test coverage**: 14/14 passing
+- Auto-approve below threshold ($500 < $1000)
+- Manual above threshold ($5000 > $1000)
+- Kill switch blocks auto-approval
+- Feature flag disabled requires manual
+- Token valid and consumable
+- Custom threshold ($2000)
+- Exactly at threshold ($1000 == $1000)
+- Missing notional field fallback
+- Invalid JSON fallback
+- RISK_REJECTED raises ValueError
+- Very small notional ($0.01)
+- Zero threshold ($0) blocks all
 
-**Acceptance criteria**
+**Environment variables**:
+- AUTO_APPROVAL=true (default: false)
+- AUTO_APPROVAL_MAX_NOTIONAL=1000 (default: 1000.0)
 
-* Feature flag per auto-commit
-* Kill switch interrompe immediatamente
+**Examples**:
+* ETF rebalance with $500 notional → auto-approved
+* DCA weekly $200 → auto-approved
+* Large trade $5000 → manual approval required
+* Kill switch active → all manual, including small trades
 
 ---
 
@@ -370,13 +398,13 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ## 5) Priorità consigliata (ordine di implementazione)
 
-1. **Epic B Market Data v2** (snapshot + historical bars)
-2. **Epic C Instrument Resolution**
-3. **Epic A IBKR Adapter Real (paper)**
-4. **Epic D Flex Queries**
-5. **Epic E MCP Hardening/Versioning**
-6. **Epic F Cancel/Modify gated**
-7. **Epic G Auto-commit banale**
+1. **Epic B Market Data v2** ✅ (25/12/2025)
+2. **Epic C Instrument Resolution** ✅ (25/12/2025)
+3. **Epic A IBKR Adapter Real (paper)** ✅ (25/12/2025)
+4. **Epic D Flex Queries** ✅ (26/12/2025)
+5. **Epic E MCP Hardening/Versioning** ✅ (26/12/2025)
+6. **Epic F Cancel/Modify gated** ✅ (26/12/2025)
+7. **Epic G Auto-commit banale** ✅ (26/12/2025)
 
 ---
 

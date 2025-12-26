@@ -122,19 +122,47 @@ class ApprovalService:
             raise ValueError(f"Proposal {proposal.proposal_id} not found")
         self._proposals[proposal.proposal_id] = proposal
     
-    def request_approval(self, proposal_id: str) -> OrderProposal:
+    def request_approval(
+        self,
+        proposal_id: str,
+        feature_flags=None,
+        kill_switch=None,
+        current_time: Optional[datetime] = None
+    ) -> tuple[OrderProposal, Optional[ApprovalToken]]:
         """
-        Mark proposal as APPROVAL_REQUESTED.
+        Mark proposal as APPROVAL_REQUESTED, or auto-approve if eligible.
+        
+        Auto-approval conditions (all must be true):
+        1. feature_flags.auto_approval == True
+        2. notional <= feature_flags.auto_approval_max_notional
+        3. kill_switch.is_enabled() == False
+        4. proposal.state == RISK_APPROVED
+        
+        If auto-approval eligible:
+            - Transitions directly to APPROVAL_GRANTED
+            - Generates ApprovalToken automatically
+            - Returns (updated_proposal, token)
+        
+        Otherwise:
+            - Transitions to APPROVAL_REQUESTED (manual approval required)
+            - Returns (updated_proposal, None)
         
         Args:
             proposal_id: ID of proposal to request approval for
+            feature_flags: FeatureFlags instance (optional, for auto-approval check)
+            kill_switch: KillSwitch instance (optional, for auto-approval check)
+            current_time: Current time (defaults to now UTC)
             
         Returns:
-            Updated OrderProposal
+            Tuple of (updated OrderProposal, optional ApprovalToken)
+            Token is None if manual approval required, or ApprovalToken if auto-approved.
             
         Raises:
             ValueError: If proposal not found or not in RISK_APPROVED state
         """
+        if current_time is None:
+            current_time = datetime.now(timezone.utc)
+        
         proposal = self.get_proposal(proposal_id)
         if proposal is None:
             raise ValueError(f"Proposal {proposal_id} not found")
@@ -145,9 +173,41 @@ class ApprovalService:
                 "Must be RISK_APPROVED."
             )
         
-        updated = proposal.with_state(OrderState.APPROVAL_REQUESTED)
-        self.update_proposal(updated)
-        return updated
+        # Check auto-approval eligibility
+        auto_approved = False
+        if feature_flags is not None and kill_switch is not None:
+            if (
+                feature_flags.auto_approval
+                and not kill_switch.is_enabled()
+            ):
+                # Parse simulation JSON to get notional
+                try:
+                    simulation_data = json.loads(proposal.simulation_json)
+                    notional = Decimal(str(simulation_data.get("gross_notional", "0")))
+                    
+                    if notional <= Decimal(str(feature_flags.auto_approval_max_notional)):
+                        auto_approved = True
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    # If we can't parse, fall back to manual approval
+                    auto_approved = False
+        
+        if auto_approved:
+            # Auto-approve: generate token and transition to APPROVAL_GRANTED
+            token = self._generate_token(proposal, current_time)
+            self._tokens[token.token_id] = token
+            
+            updated = proposal.with_state(
+                OrderState.APPROVAL_GRANTED,
+                approval_token=token.token_id,
+                approval_reason="Auto-approved (below threshold)"
+            )
+            self.update_proposal(updated)
+            return updated, token
+        else:
+            # Manual approval required
+            updated = proposal.with_state(OrderState.APPROVAL_REQUESTED)
+            self.update_proposal(updated)
+            return updated, None
     
     def grant_approval(
         self,

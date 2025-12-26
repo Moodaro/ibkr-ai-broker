@@ -268,13 +268,15 @@ def test_approval_service_store_proposal(approval_service, approved_proposal):
 
 
 def test_approval_service_request_approval(approval_service, approved_proposal):
-    """Test requesting approval."""
+    """Test requesting approval (manual approval required)."""
     approval_service.store_proposal(approved_proposal)
     
-    updated = approval_service.request_approval(approved_proposal.proposal_id)
+    # Without feature_flags/kill_switch, should require manual approval
+    updated, token = approval_service.request_approval(approved_proposal.proposal_id)
     
     assert updated.state == OrderState.APPROVAL_REQUESTED
     assert updated.proposal_id == approved_proposal.proposal_id
+    assert token is None  # No auto-approval without feature flags
 
 
 def test_approval_service_request_approval_fails_wrong_state(approval_service, sample_intent_json):
@@ -295,7 +297,7 @@ def test_approval_service_request_approval_fails_wrong_state(approval_service, s
 def test_approval_service_grant_approval(approval_service, approved_proposal):
     """Test granting approval generates token."""
     approval_service.store_proposal(approved_proposal)
-    approval_service.request_approval(approved_proposal.proposal_id)
+    approval_service.request_approval(approved_proposal.proposal_id)  # Returns tuple, ignore
     
     current_time = datetime.now(timezone.utc)
     updated, token = approval_service.grant_approval(
@@ -326,7 +328,7 @@ def test_approval_service_grant_approval_fails_wrong_state(approval_service, app
 def test_approval_service_deny_approval(approval_service, approved_proposal):
     """Test denying approval."""
     approval_service.store_proposal(approved_proposal)
-    approval_service.request_approval(approved_proposal.proposal_id)
+    approval_service.request_approval(approved_proposal.proposal_id)  # Returns tuple, ignore
     
     updated = approval_service.deny_approval(
         approved_proposal.proposal_id,
@@ -340,7 +342,7 @@ def test_approval_service_deny_approval(approval_service, approved_proposal):
 def test_approval_service_validate_token(approval_service, approved_proposal):
     """Test validating a token."""
     approval_service.store_proposal(approved_proposal)
-    approval_service.request_approval(approved_proposal.proposal_id)
+    approval_service.request_approval(approved_proposal.proposal_id)  # Returns tuple, ignore
     
     current_time = datetime.now(timezone.utc)
     updated, token = approval_service.grant_approval(
@@ -374,7 +376,7 @@ def test_approval_service_validate_token(approval_service, approved_proposal):
 def test_approval_service_consume_token(approval_service, approved_proposal):
     """Test consuming a token marks it as used."""
     approval_service.store_proposal(approved_proposal)
-    approval_service.request_approval(approved_proposal.proposal_id)
+    approval_service.request_approval(approved_proposal.proposal_id)  # Returns tuple, ignore
     
     current_time = datetime.now(timezone.utc)
     updated, token = approval_service.grant_approval(
@@ -409,8 +411,8 @@ def test_approval_service_get_pending_proposals(approval_service, sample_intent_
         approval_service.store_proposal(p)
     
     # Request approval for first 2
-    approval_service.request_approval("proposal-0")
-    approval_service.request_approval("proposal-1")
+    approval_service.request_approval("proposal-0")  # Returns tuple, ignore
+    approval_service.request_approval("proposal-1")  # Returns tuple, ignore
     
     pending = approval_service.get_pending_proposals()
     

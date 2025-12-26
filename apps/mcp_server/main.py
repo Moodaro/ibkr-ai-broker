@@ -654,21 +654,49 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
             risk_decision=risk_decision,
         )
         
-        # Request approval
-        approval_service.request_approval(proposal.proposal_id)
+        # Request approval (may auto-approve if eligible)
+        from packages.feature_flags import get_feature_flags
+        from packages.kill_switch import get_kill_switch
         
-        result = {
-            "status": "APPROVAL_REQUESTED",
-            "proposal_id": proposal.proposal_id,
-            "decision": risk_decision.decision.value,
-            "reason": risk_decision.reason,
-            "warnings": risk_decision.warnings,
-            "symbol": symbol,
-            "side": side.upper(),
-            "quantity": str(quantity),
-            "estimated_cost": str(sim_result.net_cash_impact),
-            "message": "Proposal created and awaiting human approval. Use dashboard to approve or deny.",
-        }
+        feature_flags = get_feature_flags()
+        kill_switch_inst = get_kill_switch()
+        
+        updated_proposal, token = approval_service.request_approval(
+            proposal.proposal_id,
+            feature_flags=feature_flags,
+            kill_switch=kill_switch_inst
+        )
+        
+        if token is not None:
+            # Auto-approved!
+            result = {
+                "status": "AUTO_APPROVED",
+                "proposal_id": updated_proposal.proposal_id,
+                "token": token.token_id,
+                "expires_at": token.expires_at.isoformat(),
+                "decision": risk_decision.decision.value,
+                "reason": "Auto-approved (notional below threshold)",
+                "warnings": risk_decision.warnings,
+                "symbol": symbol,
+                "side": side.upper(),
+                "quantity": str(quantity),
+                "estimated_cost": str(sim_result.net_cash_impact),
+                "message": f"Order auto-approved (notional ${sim_result.gross_notional} <= ${feature_flags.auto_approval_max_notional}). Token expires at {token.expires_at.isoformat()}.",
+            }
+        else:
+            # Manual approval required
+            result = {
+                "status": "APPROVAL_REQUESTED",
+                "proposal_id": updated_proposal.proposal_id,
+                "decision": risk_decision.decision.value,
+                "reason": risk_decision.reason,
+                "warnings": risk_decision.warnings,
+                "symbol": symbol,
+                "side": side.upper(),
+                "quantity": str(quantity),
+                "estimated_cost": str(sim_result.net_cash_impact),
+                "message": "Proposal created and awaiting human approval. Use dashboard to approve or deny.",
+            }
         
         emit_audit_event("request_approval", correlation_id, arguments, result)
         

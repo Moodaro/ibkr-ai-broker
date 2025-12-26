@@ -673,8 +673,18 @@ async def request_approval(request: ApprovalRequest) -> ApprovalResponse:
     correlation_id = get_correlation_id() or "no-correlation-id"
     
     try:
-        # Request approval
-        updated = approval_service.request_approval(request.proposal_id)
+        # Request approval (may auto-approve if eligible)
+        from packages.feature_flags import get_feature_flags
+        from packages.kill_switch import get_kill_switch
+        
+        feature_flags = get_feature_flags()
+        kill_switch_inst = get_kill_switch()
+        
+        updated, token = approval_service.request_approval(
+            request.proposal_id,
+            feature_flags=feature_flags,
+            kill_switch=kill_switch_inst
+        )
         
         # Record metrics - proposal count by state
         collector = get_metrics_collector()
@@ -685,14 +695,28 @@ async def request_approval(request: ApprovalRequest) -> ApprovalResponse:
         collector.increment_proposal_count(symbol=symbol, state=updated.state.value)
         
         # Emit audit event
-        event = AuditEventCreate(
-            event_type=EventType.APPROVAL_REQUESTED,
-            correlation_id=updated.correlation_id,
-            data={
-                "proposal_id": updated.proposal_id,
-                "state": updated.state.value,
-            },
-        )
+        if token is not None:
+            # Auto-approved
+            event = AuditEventCreate(
+                event_type=EventType.AUTO_APPROVAL_GRANTED,
+                correlation_id=updated.correlation_id,
+                data={
+                    "proposal_id": updated.proposal_id,
+                    "state": updated.state.value,
+                    "token_id": token.token_id,
+                    "reason": "Auto-approved (notional below threshold)",
+                },
+            )
+        else:
+            # Manual approval requested
+            event = AuditEventCreate(
+                event_type=EventType.APPROVAL_REQUESTED,
+                correlation_id=updated.correlation_id,
+                data={
+                    "proposal_id": updated.proposal_id,
+                    "state": updated.state.value,
+                },
+            )
         audit_store.append_event(event)
         
         return ApprovalResponse(
