@@ -25,6 +25,9 @@ dependencies = [
     "psycopg2-binary>=2.9.10",  # PostgreSQL driver
     "aiosqlite>=0.20.0",  # Async SQLite for dev
     
+    # Scheduling
+    "apscheduler>=3.10.0",  # Background task scheduler
+    
     # Logging & observability
     "structlog>=24.4.0",
     "python-json-logger>=3.2.1",

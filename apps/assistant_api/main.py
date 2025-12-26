@@ -96,6 +96,9 @@ kill_switch: KillSwitch | None = None
 # Global flex query service instance
 flex_query_service: FlexQueryService | None = None
 
+# Global flex query scheduler instance
+flex_query_scheduler = None  # FlexQueryScheduler | None (avoid circular import)
+
 # Initialize logger
 logger = get_logger(__name__)
 
@@ -103,7 +106,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan management."""
-    global audit_store, simulator, risk_engine, approval_service, broker, order_submitter, kill_switch, flex_query_service
+    global audit_store, simulator, risk_engine, approval_service, broker, order_submitter, kill_switch, flex_query_service, flex_query_scheduler
     
     # Setup logging
     import os
@@ -151,6 +154,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         config_path=os.getenv("FLEX_QUERY_CONFIG", None)
     )
     
+    # Initialize FlexQuery scheduler (background automation)
+    from packages.flex_query.scheduler import FlexQueryScheduler
+    flex_query_scheduler = FlexQueryScheduler(
+        service=flex_query_service,
+        audit_store=audit_store,
+        timezone=os.getenv("SCHEDULER_TIMEZONE", "UTC")
+    )
+    
+    # Start scheduler only if there are auto-scheduled queries
+    try:
+        queries = flex_query_service.list_queries(enabled_only=True)
+        auto_queries = [q for q in queries.queries if q.auto_schedule]
+        if auto_queries:
+            flex_query_scheduler.start()
+            logger.info("flex_query_scheduler_started", auto_queries_count=len(auto_queries))
+        else:
+            logger.info("flex_query_scheduler_skipped", reason="no_auto_scheduled_queries")
+    except Exception as e:
+        logger.error("flex_query_scheduler_failed_to_start", error=str(e), exc_info=True)
+    
     # Initialize broker adapter (auto-detect with fallback)
     broker = get_broker_adapter()
     
@@ -171,8 +194,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     
     yield
     
-    # Cleanup (if needed)
-    pass
+    # Cleanup
+    logger.info("assistant_api_shutting_down")
+    
+    # Stop scheduler if running
+    try:
+        if flex_query_scheduler and flex_query_scheduler.scheduler.running:
+            flex_query_scheduler.stop(wait=True)
+            logger.info("flex_query_scheduler_stopped")
+    except Exception as e:
+        logger.error("flex_query_scheduler_shutdown_error", error=str(e), exc_info=True)
 
 
 # Create FastAPI app

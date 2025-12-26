@@ -39,9 +39,16 @@ class EventType(str, Enum):
     ORDER_REJECTED = "OrderRejected"
 
     # System Events
+    SYSTEM_STARTED = "SystemStarted"
+    SYSTEM_STOPPED = "SystemStopped"
     KILL_SWITCH_ACTIVATED = "KillSwitchActivated"
     KILL_SWITCH_RELEASED = "KillSwitchReleased"
     ERROR_OCCURRED = "ErrorOccurred"
+
+    # Flex Query Events
+    FLEX_QUERY_SCHEDULED = "FlexQueryScheduled"
+    FLEX_QUERY_COMPLETED = "FlexQueryCompleted"
+    FLEX_QUERY_FAILED = "FlexQueryFailed"
 
     # MCP Tool Calls
     MCP_TOOL_CALLED = "MCPToolCalled"
