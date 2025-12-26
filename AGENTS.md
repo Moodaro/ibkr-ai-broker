@@ -629,9 +629,157 @@ Optional:
 - Ensure all dependencies are installed: `uv sync`
 - Check `pyrightconfig.json` or `mypy.ini` settings
 
+## Live Trading Patterns
+
+### Pre-flight validation pattern
+```python
+from pathlib import Path
+
+# Check environment
+import os
+env = os.getenv("ENV", "dev")
+if env == "live":
+    # Run live readiness checks
+    import pytest
+    result = pytest.main([
+        "tests/test_live_readiness.py",
+        "-v",
+        "--tb=short",
+    ])
+    if result != 0:
+        raise RuntimeError("Live readiness checks failed - DO NOT DEPLOY")
+```
+
+### Kill switch pattern
+```python
+from packages.kill_switch import get_kill_switch
+
+# Get global kill switch instance
+kill_switch = get_kill_switch()
+
+# Check before any order submission
+if kill_switch.is_enabled():
+    raise RuntimeError("Kill switch active - trading halted")
+
+# Or use check_or_raise (raises with detailed message)
+kill_switch.check_or_raise("order_submission")
+```
+
+### Health monitoring pattern
+```python
+from packages.health_monitor import (
+    HealthMonitor,
+    create_kill_switch_check,
+    create_broker_connection_check,
+    create_disk_space_check,
+)
+from packages.audit_store import AuditStore
+from packages.kill_switch import get_kill_switch
+
+# Setup health monitor
+audit_store = AuditStore("data/audit.db")
+monitor = HealthMonitor(audit_store)
+
+# Register checks
+monitor.register_health_check(
+    "kill_switch",
+    create_kill_switch_check(get_kill_switch()),
+)
+monitor.register_health_check(
+    "broker",
+    create_broker_connection_check(broker, account_id),
+)
+monitor.register_health_check(
+    "disk_space",
+    create_disk_space_check(min_gb=5.0),
+)
+
+# Run all checks
+checks = monitor.run_health_checks()
+overall_status = monitor.get_overall_status()
+
+if overall_status == HealthStatus.UNHEALTHY:
+    # Trigger kill switch or alert
+    pass
+```
+
+### Alert condition pattern
+```python
+from packages.health_monitor import AlertCondition, AlertSeverity
+
+# Define custom alert condition
+high_error_rate = AlertCondition(
+    name="high_error_rate",
+    check_function=lambda: error_count > 10,  # Your logic
+    severity=AlertSeverity.CRITICAL,
+    message_template="Error rate exceeded threshold",
+    cooldown_seconds=300,  # 5 min between alerts
+)
+
+monitor.register_alert_condition(high_error_rate)
+
+# Check alerts periodically
+alerts = monitor.check_alerts()
+for alert in alerts:
+    # Send notification (email, SMS, etc.)
+    send_alert(alert)
+```
+
+### Live deployment workflow
+```bash
+# 1. Run pre-flight checklist
+pytest tests/test_live_readiness.py -v
+
+# 2. Review LIVE_TRADING.md procedures
+cat docs/LIVE_TRADING.md
+
+# 3. Set environment
+export ENV=live
+export IBKR_PORT=7496  # Live port (7497 = paper)
+
+# 4. Start services with health monitoring
+docker-compose up -d
+
+# 5. Verify kill switch is ACTIVE
+python -c "from packages.kill_switch import get_kill_switch; ks = get_kill_switch(); print(f'Kill switch: {'ACTIVE' if not ks.is_enabled() else 'TRIGGERED'}')"
+
+# 6. Test minimum trade (1 share or $100)
+# Use dashboard or API to submit test order
+# Verify approval flow, execution, audit logging
+
+# 7. Monitor continuously
+# Open dashboard: http://localhost:8080
+# Watch audit log: tail -f data/audit.db
+```
+
+### Emergency kill switch activation
+```python
+from packages.kill_switch import get_kill_switch
+
+# Activate kill switch
+kill_switch = get_kill_switch()
+kill_switch.activate(
+    reason="Emergency stop - unexpected behavior",
+    activated_by="operator_name",
+)
+
+# All subsequent order submissions will be blocked
+# Reset only after investigation:
+# kill_switch.deactivate(deactivated_by="operator_name")
+```
+
+**Critical Rules**:
+1. Never deploy to live without passing `test_live_readiness.py`
+2. Always verify kill switch is accessible before trading
+3. Monitor health checks continuously (every 60 seconds recommended)
+4. Review LIVE_TRADING.md emergency procedures before going live
+5. Keep dashboard open during live trading hours
+6. Test kill switch activation/deactivation in paper mode first
+
 ## Resources
 
 - [ROADMAP.md](ROADMAP.md) - Full development roadmap
+- [docs/LIVE_TRADING.md](docs/LIVE_TRADING.md) - Live trading operations guide **← READ BEFORE GOING LIVE**
 - [docs/threat-model.md](docs/threat-model.md) - Security considerations
 - [docs/adr/](docs/adr/) - Architecture Decision Records
 - [IBKR API Docs](https://interactivebrokers.github.io/)
