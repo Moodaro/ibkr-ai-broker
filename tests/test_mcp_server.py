@@ -93,8 +93,9 @@ async def test_get_portfolio_missing_account_id(mock_audit_store, mock_broker):
     result = await handle_get_portfolio({})
     
     assert len(result) == 1
-    assert "Error" in result[0].text
-    assert "account_id is required" in result[0].text
+    data = json.loads(result[0].text)
+    assert data["status"] == "VALIDATION_ERROR"
+    assert "account_id" in data["error"]
 
 
 @pytest.mark.asyncio
@@ -165,7 +166,9 @@ async def test_simulate_order_missing_params(mock_audit_store, mock_broker, mock
     result = await handle_simulate_order(arguments)
     
     assert len(result) == 1
-    assert "Error" in result[0].text
+    data = json.loads(result[0].text)
+    assert data["status"] == "VALIDATION_ERROR"
+    assert "Field required" in data["error"]
 
 
 @pytest.mark.asyncio

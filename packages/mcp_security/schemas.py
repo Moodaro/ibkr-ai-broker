@@ -5,9 +5,9 @@ Defines strict schemas for all MCP tools to prevent parameter injection.
 """
 
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Union
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from packages.mcp_security import StrictBaseModel
 
@@ -21,11 +21,19 @@ class RequestApprovalSchema(StrictBaseModel):
     account_id: str = Field(..., min_length=1, max_length=100, description="Account identifier")
     symbol: str = Field(..., min_length=1, max_length=50, description="Instrument symbol")
     side: str = Field(..., pattern="^(BUY|SELL)$", description="Order side: BUY or SELL")
-    quantity: Decimal = Field(..., gt=0, description="Order quantity (must be positive)")
+    quantity: Union[Decimal, str, int, float] = Field(..., description="Order quantity (must be positive)")
     order_type: str = Field("MKT", pattern="^(MKT|LMT|STP|STP_LMT)$", description="Order type")
-    limit_price: Optional[Decimal] = Field(None, gt=0, description="Limit price for LMT orders")
-    market_price: Decimal = Field(..., gt=0, description="Current market price")
+    limit_price: Union[Decimal, str, int, float, None] = Field(None, description="Limit price for LMT orders")
+    market_price: Union[Decimal, str, int, float] = Field(..., description="Current market price")
     reason: str = Field(..., min_length=10, max_length=500, description="Reason for order (min 10 chars)")
+    
+    @field_validator("quantity", "market_price", "limit_price", mode="before")
+    @classmethod
+    def convert_to_decimal(cls, v):
+        """Convert numeric strings/ints/floats to Decimal."""
+        if v is None:
+            return v
+        return Decimal(str(v))
 
 
 class GetPortfolioSchema(StrictBaseModel):
@@ -48,10 +56,18 @@ class SimulateOrderSchema(StrictBaseModel):
     account_id: str = Field(..., min_length=1, max_length=100, description="Account identifier")
     symbol: str = Field(..., min_length=1, max_length=50, description="Instrument symbol")
     side: str = Field(..., pattern="^(BUY|SELL)$", description="Order side: BUY or SELL")
-    quantity: Decimal = Field(..., gt=0, description="Order quantity")
+    quantity: Union[Decimal, str, int, float] = Field(..., description="Order quantity")
     order_type: str = Field("MKT", pattern="^(MKT|LMT|STP|STP_LMT)$", description="Order type")
-    limit_price: Optional[Decimal] = Field(None, gt=0, description="Limit price")
-    market_price: Decimal = Field(..., gt=0, description="Current market price")
+    limit_price: Union[Decimal, str, int, float, None] = Field(None, description="Limit price")
+    market_price: Union[Decimal, str, int, float] = Field(..., description="Current market price")
+    
+    @field_validator("quantity", "market_price", "limit_price", mode="before")
+    @classmethod
+    def convert_to_decimal(cls, v):
+        """Convert numeric strings/ints/floats to Decimal."""
+        if v is None:
+            return v
+        return Decimal(str(v))
 
 
 class EvaluateRiskSchema(StrictBaseModel):
@@ -59,10 +75,18 @@ class EvaluateRiskSchema(StrictBaseModel):
     account_id: str = Field(..., min_length=1, max_length=100, description="Account identifier")
     symbol: str = Field(..., min_length=1, max_length=50, description="Instrument symbol")
     side: str = Field(..., pattern="^(BUY|SELL)$", description="Order side: BUY or SELL")
-    quantity: Decimal = Field(..., gt=0, description="Order quantity")
+    quantity: Union[Decimal, str, int, float] = Field(..., description="Order quantity")
     order_type: str = Field("MKT", pattern="^(MKT|LMT|STP|STP_LMT)$", description="Order type")
-    limit_price: Optional[Decimal] = Field(None, gt=0, description="Limit price")
-    market_price: Decimal = Field(..., gt=0, description="Current market price")
+    limit_price: Union[Decimal, str, int, float, None] = Field(None, description="Limit price")
+    market_price: Union[Decimal, str, int, float] = Field(..., description="Current market price")
+    
+    @field_validator("quantity", "market_price", "limit_price", mode="before")
+    @classmethod
+    def convert_to_decimal(cls, v):
+        """Convert numeric strings/ints/floats to Decimal."""
+        if v is None:
+            return v
+        return Decimal(str(v))
 
 
 class ListFlexQueriesSchema(StrictBaseModel):
