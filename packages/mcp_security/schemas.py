@@ -77,14 +77,47 @@ class RunFlexQuerySchema(StrictBaseModel):
     to_date: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="End date (YYYY-MM-DD)")
 
 
+class GetCashSchema(StrictBaseModel):
+    """Schema for get_cash tool (read-only)."""
+    account_id: str = Field(..., min_length=1, max_length=100, description="Account identifier")
+
+
+class GetOpenOrdersSchema(StrictBaseModel):
+    """Schema for get_open_orders tool (read-only)."""
+    account_id: str = Field(..., min_length=1, max_length=100, description="Account identifier")
+
+
+class GetMarketBarsSchema(StrictBaseModel):
+    """Schema for get_market_bars tool (read-only)."""
+    symbol: str = Field(..., min_length=1, max_length=50, description="Instrument symbol")
+    bar_size: str = Field("1 day", pattern=r"^\d+ (sec|min|hour|day|week|month)s?$", description="Bar size")
+    duration: str = Field("1 Y", pattern=r"^\d+ (S|D|W|M|Y)$", description="Duration")
+
+
+class InstrumentSearchSchema(StrictBaseModel):
+    """Schema for instrument_search tool (read-only)."""
+    query: str = Field(..., min_length=1, max_length=100, description="Search query")
+    limit: int = Field(10, ge=1, le=100, description="Max results (1-100)")
+
+
+class InstrumentResolveSchema(StrictBaseModel):
+    """Schema for instrument_resolve tool (read-only)."""
+    symbol: str = Field(..., min_length=1, max_length=50, description="Instrument symbol")
+
+
 # Schema registry: maps tool names to their validation schemas
 TOOL_SCHEMAS = {
     "request_approval": RequestApprovalSchema,
     "get_portfolio": GetPortfolioSchema,
     "get_positions": GetPositionsSchema,
+    "get_cash": GetCashSchema,
+    "get_open_orders": GetOpenOrdersSchema,
     "get_market_snapshot": GetMarketSnapshotSchema,
+    "get_market_bars": GetMarketBarsSchema,
     "simulate_order": SimulateOrderSchema,
     "evaluate_risk": EvaluateRiskSchema,
+    "instrument_search": InstrumentSearchSchema,
+    "instrument_resolve": InstrumentResolveSchema,
     "list_flex_queries": ListFlexQueriesSchema,
     "run_flex_query": RunFlexQuerySchema,
 }

@@ -36,7 +36,21 @@ from packages.broker_ibkr.factory import get_broker_adapter
 from packages.broker_ibkr.models import Portfolio, Instrument, InstrumentType
 from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.mcp_security import validate_schema
-from packages.mcp_security.schemas import RequestApprovalSchema
+from packages.mcp_security.schemas import (
+    RequestApprovalSchema,
+    GetPortfolioSchema,
+    GetPositionsSchema,
+    GetCashSchema,
+    GetOpenOrdersSchema,
+    GetMarketSnapshotSchema,
+    GetMarketBarsSchema,
+    SimulateOrderSchema,
+    EvaluateRiskSchema,
+    InstrumentSearchSchema,
+    InstrumentResolveSchema,
+    ListFlexQueriesSchema,
+    RunFlexQuerySchema,
+)
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
 from packages.schemas.market_data import MarketSnapshot, MarketBar, TimeframeType
@@ -113,6 +127,7 @@ def emit_audit_event(
         pass
 
 
+@validate_schema(GetPortfolioSchema)
 async def handle_get_portfolio(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Get portfolio snapshot.
@@ -170,6 +185,7 @@ async def handle_get_portfolio(arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(GetPositionsSchema)
 async def handle_get_positions(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Get open positions.
@@ -221,6 +237,7 @@ async def handle_get_positions(arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(GetCashSchema)
 async def handle_get_cash(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Get cash balances.
@@ -266,6 +283,7 @@ async def handle_get_cash(arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(GetOpenOrdersSchema)
 async def handle_get_open_orders(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Get open orders.
@@ -316,6 +334,7 @@ async def handle_get_open_orders(arguments: dict[str, Any]) -> list[TextContent]
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(SimulateOrderSchema)
 async def handle_simulate_order(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Simulate order pre-trade.
@@ -404,6 +423,7 @@ async def handle_simulate_order(arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(EvaluateRiskSchema)
 async def handle_evaluate_risk(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Evaluate risk for order.
@@ -631,6 +651,7 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(GetMarketSnapshotSchema)
 async def handle_get_market_snapshot(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Get current market snapshot for an instrument.
@@ -686,6 +707,7 @@ async def handle_get_market_snapshot(arguments: dict[str, Any]) -> list[TextCont
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(GetMarketBarsSchema)
 async def handle_get_market_bars(arguments: dict[str, Any]) -> list[TextContent]:
     """
     Get historical OHLCV bars for an instrument.
@@ -770,6 +792,7 @@ async def handle_get_market_bars(arguments: dict[str, Any]) -> list[TextContent]
         return [TextContent(type="text", text=f"Error: {e}")]
 
 
+@validate_schema(InstrumentSearchSchema)
 async def handle_instrument_search(arguments: dict[str, Any]) -> list[TextContent]:
     """Handle instrument search tool call.
     
@@ -836,6 +859,7 @@ async def handle_instrument_search(arguments: dict[str, Any]) -> list[TextConten
         return [TextContent(type="text", text=f"Error: {e}")]
 
 
+@validate_schema(InstrumentResolveSchema)
 async def handle_instrument_resolve(arguments: dict[str, Any]) -> list[TextContent]:
     """Handle instrument resolution tool call.
     
@@ -942,6 +966,7 @@ async def handle_instrument_resolve(arguments: dict[str, Any]) -> list[TextConte
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+@validate_schema(ListFlexQueriesSchema)
 async def handle_list_flex_queries(arguments: dict[str, Any]) -> list[TextContent]:
     """Handle list_flex_queries tool call.
     
@@ -988,6 +1013,7 @@ async def handle_list_flex_queries(arguments: dict[str, Any]) -> list[TextConten
         return [TextContent(type="text", text=f"Error: {e}")]
 
 
+@validate_schema(RunFlexQuerySchema)
 async def handle_run_flex_query(arguments: dict[str, Any]) -> list[TextContent]:
     """Handle run_flex_query tool call.
     

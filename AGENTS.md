@@ -178,6 +178,43 @@ scheduler.stop(wait=True)  # wait for running jobs to complete
 - **5 fields**: `minute hour day month weekday` (e.g., `0 9 * * *`)
 - **6 fields**: `second minute hour day month weekday` (e.g., `0 0 9 * * *`)
 - Examples:
+
+### MCP parameter validation pattern
+```python
+from packages.mcp_security import validate_schema
+from packages.mcp_security.schemas import RequestApprovalSchema
+
+# Apply decorator to any MCP tool handler
+@validate_schema(RequestApprovalSchema)
+async def handle_request_approval(arguments: dict[str, Any]):
+    # Arguments already validated against schema
+    # - Type safety enforced (Decimal for money, str for text)
+    # - Unknown fields rejected (extra="forbid")
+    # - Pattern matching applied (regex for symbols, sides)
+    # - Range validation checked (gt=0 for quantities)
+    pass
+```
+
+**Pydantic Schema** (example):
+```python
+from packages.mcp_security import StrictBaseModel
+
+class RequestApprovalSchema(StrictBaseModel):
+    """Schema rejects unknown fields automatically."""
+    account_id: str = Field(..., min_length=1)
+    symbol: str = Field(..., pattern=r"^[A-Z]{1,5}$")
+    side: str = Field(..., pattern=r"^(BUY|SELL)$")
+    quantity: Decimal = Field(..., gt=0)
+    reason: str = Field(..., min_length=10)
+```
+
+**Security Benefits**:
+- **Parameter injection prevention**: Unknown fields rejected
+- **Type safety**: Decimal for money (prevents float precision issues)
+- **Enum validation**: Fixed choices (BUY|SELL, MKT|LMT|STP|STP_LMT)
+- **Range checking**: Positive quantities/prices enforced
+- **Pattern matching**: Symbol format validated
+- **Audit trail**: Validation errors logged automatically
   - `0 9 * * *` - Every day at 9:00 AM
   - `30 14 * * 1-5` - Weekdays at 2:30 PM
   - `0 0 1 * *` - First day of month at midnight
