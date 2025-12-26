@@ -38,9 +38,11 @@ from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
 from packages.schemas.market_data import MarketSnapshot, MarketBar, TimeframeType
+from packages.schemas.flex_query import FlexQueryRequest
 from packages.structured_logging import get_logger, setup_logging
 from packages.trade_sim import TradeSimulator, SimulationConfig
 from packages.approval_service import ApprovalService
+from packages.flex_query import FlexQueryService
 
 
 # Global services (initialized on startup)
@@ -50,6 +52,8 @@ simulator: Optional[TradeSimulator] = None
 risk_engine: Optional[RiskEngine] = None
 approval_service: Optional[ApprovalService] = None
 kill_switch: Optional[KillSwitch] = None
+flex_query_service: Optional[FlexQueryService] = None
+flex_query_service: Optional[FlexQueryService] = None
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -932,9 +936,150 @@ async def handle_instrument_resolve(arguments: dict[str, Any]) -> list[TextConte
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+async def handle_list_flex_queries(arguments: dict[str, Any]) -> list[TextContent]:
+    """Handle list_flex_queries tool call.
+    
+    Args:
+        arguments: Tool arguments (enabled_only optional)
+    
+    Returns:
+        List of configured Flex Queries
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        enabled_only = arguments.get("enabled_only", True)
+        
+        emit_audit_event("list_flex_queries", correlation_id, {"enabled_only": enabled_only})
+        
+        if flex_query_service is None:
+            raise RuntimeError("FlexQuery service not initialized")
+        
+        response = flex_query_service.list_queries(enabled_only=enabled_only)
+        
+        result = {
+            "total": response.total,
+            "queries": [
+                {
+                    "query_id": q.query_id,
+                    "name": q.name,
+                    "type": q.query_type,
+                    "description": q.description,
+                    "enabled": q.enabled,
+                    "auto_schedule": q.auto_schedule,
+                    "schedule_cron": q.schedule_cron,
+                }
+                for q in response.queries
+            ],
+        }
+        
+        emit_audit_event("list_flex_queries", correlation_id, {"count": response.total}, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+    except Exception as e:
+        logger.error(f"Error listing flex queries: {e}", exc_info=True)
+        emit_audit_event("list_flex_queries", correlation_id, {}, error=str(e))
+        return [TextContent(type="text", text=f"Error: {e}")]
+
+
+async def handle_run_flex_query(arguments: dict[str, Any]) -> list[TextContent]:
+    """Handle run_flex_query tool call.
+    
+    Args:
+        arguments: Tool arguments containing query_id, optional from_date/to_date
+    
+    Returns:
+        Flex Query execution result with parsed data
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        query_id = arguments.get("query_id")
+        if not query_id:
+            raise ValueError("query_id is required")
+        
+        from_date_str = arguments.get("from_date")
+        to_date_str = arguments.get("to_date")
+        
+        from_date = None
+        to_date = None
+        if from_date_str:
+            from_date = datetime.fromisoformat(from_date_str).date()
+        if to_date_str:
+            to_date = datetime.fromisoformat(to_date_str).date()
+        
+        emit_audit_event("run_flex_query", correlation_id, {
+            "query_id": query_id,
+            "from_date": from_date_str,
+            "to_date": to_date_str,
+        })
+        
+        if flex_query_service is None:
+            raise RuntimeError("FlexQuery service not initialized")
+        
+        # Create request
+        request = FlexQueryRequest(
+            query_id=query_id,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        
+        # Execute query (with mock for now, real implementation would poll IBKR)
+        query_result = flex_query_service.execute_query(request)
+        
+        result = {
+            "execution_id": query_result.execution_id,
+            "status": query_result.status,
+            "query_type": query_result.query_type,
+            "from_date": query_result.from_date.isoformat() if query_result.from_date else None,
+            "to_date": query_result.to_date.isoformat() if query_result.to_date else None,
+            "trades_count": len(query_result.trades),
+            "pnl_records_count": len(query_result.pnl_records),
+            "cash_transactions_count": len(query_result.cash_transactions),
+        }
+        
+        # Include summary data if completed
+        if query_result.status == "COMPLETED":
+            if query_result.trades:
+                result["trades_summary"] = [
+                    {
+                        "trade_id": t.trade_id,
+                        "symbol": t.symbol,
+                        "trade_date": t.trade_date.isoformat(),
+                        "quantity": str(t.quantity),
+                        "price": str(t.trade_price),
+                        "net_cash": str(t.net_cash),
+                        "buy_sell": t.buy_sell,
+                    }
+                    for t in query_result.trades[:10]  # First 10 for summary
+                ]
+            
+            if query_result.pnl_records:
+                result["pnl_summary"] = [
+                    {
+                        "symbol": p.symbol,
+                        "realized_pnl": str(p.realized_pnl),
+                        "unrealized_pnl": str(p.unrealized_pnl),
+                    }
+                    for p in query_result.pnl_records[:10]
+                ]
+        
+        emit_audit_event("run_flex_query", correlation_id, {
+            "query_id": query_id,
+            "status": query_result.status,
+            "trades": len(query_result.trades),
+        }, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2, cls=DecimalEncoder))]
+    except Exception as e:
+        logger.error(f"Error running flex query: {e}", exc_info=True)
+        emit_audit_event("run_flex_query", correlation_id, {"query_id": arguments.get("query_id")}, error=str(e))
+        return [TextContent(type="text", text=f"Error: {e}")]
+
+
 async def main():
     """Main entry point for MCP server."""
-    global audit_store, broker, simulator, risk_engine, approval_service, kill_switch
+    global audit_store, broker, simulator, risk_engine, approval_service, kill_switch, flex_query_service
     
     # Setup logging
     import os
@@ -960,6 +1105,12 @@ async def main():
     )
     
     approval_service = ApprovalService(max_proposals=1000)
+    
+    # Initialize FlexQuery service
+    flex_query_service = FlexQueryService(
+        storage_path="./data/flex_reports",
+        config_path=os.getenv("FLEX_QUERY_CONFIG", None)
+    )
     
     logger.info("mcp_server_services_initialized")
     
@@ -1198,6 +1349,42 @@ async def main():
                     "required": ["symbol"],
                 },
             ),
+            Tool(
+                name="list_flex_queries",
+                description="List available IBKR Flex Queries configured for reporting and reconciliation (read-only)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "enabled_only": {
+                            "type": "boolean",
+                            "description": "Return only enabled queries (default: true)",
+                            "default": True,
+                        },
+                    },
+                },
+            ),
+            Tool(
+                name="run_flex_query",
+                description="Execute an IBKR Flex Query to retrieve trade confirmations, P&L, or cash reports (read-only)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query_id": {
+                            "type": "string",
+                            "description": "IBKR Flex Query ID to execute",
+                        },
+                        "from_date": {
+                            "type": "string",
+                            "description": "Start date in ISO format (YYYY-MM-DD), optional",
+                        },
+                        "to_date": {
+                            "type": "string",
+                            "description": "End date in ISO format (YYYY-MM-DD), optional",
+                        },
+                    },
+                    "required": ["query_id"],
+                },
+            ),
         ]
     
     # Handle tool calls
@@ -1225,6 +1412,10 @@ async def main():
             return await handle_instrument_search(arguments)
         elif name == "instrument_resolve":
             return await handle_instrument_resolve(arguments)
+        elif name == "list_flex_queries":
+            return await handle_list_flex_queries(arguments)
+        elif name == "run_flex_query":
+            return await handle_run_flex_query(arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
     

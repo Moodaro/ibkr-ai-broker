@@ -69,6 +69,8 @@ from packages.risk_engine import (
     TradingHours,
     load_policy,
 )
+from packages.flex_query import FlexQueryService
+from packages.schemas.flex_query import FlexQueryRequest
 
 # Global audit store instance
 audit_store: AuditStore | None = None
@@ -91,6 +93,9 @@ order_submitter: OrderSubmitter | None = None
 # Global kill switch instance
 kill_switch: KillSwitch | None = None
 
+# Global flex query service instance
+flex_query_service: FlexQueryService | None = None
+
 # Initialize logger
 logger = get_logger(__name__)
 
@@ -98,7 +103,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan management."""
-    global audit_store, simulator, risk_engine, approval_service, broker, order_submitter, kill_switch
+    global audit_store, simulator, risk_engine, approval_service, broker, order_submitter, kill_switch, flex_query_service
     
     # Setup logging
     import os
@@ -138,6 +143,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     
     # Initialize approval service
     approval_service = ApprovalService(max_proposals=1000, token_ttl_minutes=5)
+    
+    # Initialize FlexQuery service
+    import os
+    flex_query_service = FlexQueryService(
+        storage_path=os.getenv("FLEX_QUERY_STORAGE", "./data/flex_reports"),
+        config_path=os.getenv("FLEX_QUERY_CONFIG", None)
+    )
     
     # Initialize broker adapter (auto-detect with fallback)
     broker = get_broker_adapter()
@@ -2177,3 +2189,213 @@ async def resolve_instrument(
                     symbol=symbol,
                     error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to resolve instrument: {e}")
+
+
+@app.get("/api/v1/flex/queries")
+async def list_flex_queries(enabled_only: bool = True):
+    """List configured IBKR Flex Queries.
+    
+    Args:
+        enabled_only: Return only enabled queries (default: True)
+    
+    Returns:
+        List of available Flex Query configurations
+    """
+    try:
+        if flex_query_service is None:
+            raise HTTPException(status_code=500, detail="FlexQuery service not initialized")
+        
+        response = flex_query_service.list_queries(enabled_only=enabled_only)
+        
+        logger.info("flex_queries_listed",
+                   total=response.total,
+                   enabled_only=enabled_only)
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.CUSTOM,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "list_flex_queries",
+                    "enabled_only": enabled_only,
+                    "total": response.total,
+                },
+                metadata={"event_subtype": "flex_queries_listed"}
+            ))
+        
+        return {
+            "total": response.total,
+            "queries": [
+                {
+                    "query_id": q.query_id,
+                    "name": q.name,
+                    "type": q.query_type,
+                    "description": q.description,
+                    "enabled": q.enabled,
+                    "auto_schedule": q.auto_schedule,
+                    "schedule_cron": q.schedule_cron,
+                    "retention_days": q.retention_days,
+                }
+                for q in response.queries
+            ],
+        }
+    except Exception as e:
+        logger.error("list_flex_queries_failed",
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to list flex queries: {e}")
+
+
+@app.post("/api/v1/flex/queries/{query_id}/run")
+async def run_flex_query(
+    query_id: str,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None
+):
+    """Execute an IBKR Flex Query.
+    
+    Args:
+        query_id: IBKR Flex Query ID to execute
+        from_date: Optional start date in ISO format (YYYY-MM-DD)
+        to_date: Optional end date in ISO format (YYYY-MM-DD)
+    
+    Returns:
+        Query execution result with parsed data (trades, P&L, cash transactions)
+    """
+    try:
+        if flex_query_service is None:
+            raise HTTPException(status_code=500, detail="FlexQuery service not initialized")
+        
+        # Validate query exists
+        config = flex_query_service.get_query_config(query_id)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Query ID not found: {query_id}")
+        
+        # Parse dates
+        from datetime import date as date_type
+        parsed_from_date = None
+        parsed_to_date = None
+        
+        if from_date:
+            try:
+                parsed_from_date = date_type.fromisoformat(from_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid from_date format: {from_date}")
+        
+        if to_date:
+            try:
+                parsed_to_date = date_type.fromisoformat(to_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid to_date format: {to_date}")
+        
+        # Create request
+        request = FlexQueryRequest(
+            query_id=query_id,
+            from_date=parsed_from_date,
+            to_date=parsed_to_date,
+        )
+        
+        # Execute query
+        result = flex_query_service.execute_query(request)
+        
+        logger.info("flex_query_executed",
+                   query_id=query_id,
+                   execution_id=result.execution_id,
+                   status=result.status,
+                   trades_count=len(result.trades),
+                   pnl_records_count=len(result.pnl_records))
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.CUSTOM,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "run_flex_query",
+                    "query_id": query_id,
+                    "from_date": from_date,
+                    "to_date": to_date,
+                    "execution_id": result.execution_id,
+                    "status": result.status,
+                    "trades_count": len(result.trades),
+                    "pnl_records_count": len(result.pnl_records),
+                    "cash_transactions_count": len(result.cash_transactions),
+                },
+                metadata={"event_subtype": "flex_query_executed"}
+            ))
+        
+        response_data = {
+            "execution_id": result.execution_id,
+            "status": result.status,
+            "query_type": result.query_type,
+            "from_date": result.from_date.isoformat() if result.from_date else None,
+            "to_date": result.to_date.isoformat() if result.to_date else None,
+            "request_time": result.request_time.isoformat(),
+            "completion_time": result.completion_time.isoformat() if result.completion_time else None,
+            "trades_count": len(result.trades),
+            "pnl_records_count": len(result.pnl_records),
+            "cash_transactions_count": len(result.cash_transactions),
+        }
+        
+        # Include summary data if completed
+        if result.status == "COMPLETED":
+            if result.trades:
+                response_data["trades_summary"] = [
+                    {
+                        "trade_id": t.trade_id,
+                        "symbol": t.symbol,
+                        "trade_date": t.trade_date.isoformat(),
+                        "quantity": str(t.quantity),
+                        "trade_price": str(t.trade_price),
+                        "proceeds": str(t.proceeds),
+                        "commission": str(t.commission),
+                        "net_cash": str(t.net_cash),
+                        "buy_sell": t.buy_sell,
+                    }
+                    for t in result.trades[:20]  # First 20 for summary
+                ]
+            
+            if result.pnl_records:
+                response_data["pnl_summary"] = [
+                    {
+                        "symbol": p.symbol,
+                        "realized_pnl": str(p.realized_pnl),
+                        "unrealized_pnl": str(p.unrealized_pnl),
+                        "mtm_pnl": str(p.mtm_pnl),
+                        "fifo_pnl": str(p.fifo_pnl),
+                        "report_date": p.report_date.isoformat(),
+                    }
+                    for p in result.pnl_records[:20]
+                ]
+            
+            if result.cash_transactions:
+                response_data["cash_transactions_summary"] = [
+                    {
+                        "transaction_id": ct.transaction_id,
+                        "date": ct.date.isoformat(),
+                        "description": ct.description,
+                        "amount": str(ct.amount),
+                        "balance": str(ct.balance),
+                        "type": ct.type,
+                    }
+                    for ct in result.cash_transactions[:20]
+                ]
+        
+        if result.error_message:
+            response_data["error_message"] = result.error_message
+        
+        return response_data
+        
+    except HTTPException:
+        # Re-raise HTTPException to preserve status code
+        raise
+    except ValueError as e:
+        logger.error("run_flex_query_invalid_params",
+                    query_id=query_id,
+                    error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("run_flex_query_failed",
+                    query_id=query_id,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to run flex query: {e}")

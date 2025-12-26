@@ -30,6 +30,18 @@ from .submission import (
     SubmitOrderRequest,
     SubmitOrderResponse,
 )
+from .flex_query import (
+    CashTransaction,
+    FlexQueryConfig,
+    FlexQueryExecutionResponse,
+    FlexQueryListResponse,
+    FlexQueryRequest,
+    FlexQueryResult,
+    FlexQueryStatus,
+    FlexQueryType,
+    RealizedPnL,
+    TradeConfirmation,
+)
 
 __all__ = [
     # Approval system
@@ -56,4 +68,15 @@ __all__ = [
     # Order submission
     "SubmitOrderRequest",
     "SubmitOrderResponse",
+    # Flex Queries
+    "CashTransaction",
+    "FlexQueryConfig",
+    "FlexQueryExecutionResponse",
+    "FlexQueryListResponse",
+    "FlexQueryRequest",
+    "FlexQueryResult",
+    "FlexQueryStatus",
+    "FlexQueryType",
+    "RealizedPnL",
+    "TradeConfirmation",
 ]
