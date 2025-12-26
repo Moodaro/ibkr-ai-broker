@@ -241,9 +241,9 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 
 ---
 
-### Epic F — Order Management v2 (Cancel/Modify) — *GATED* ✅
+### Epic F — Order Management v2 (Cancel/Modify) — *GATED* ✅ (26/12/2025)
 
-**Status**: COMPLETE (4 commits: 8baabac, cb62c9a, 1fd88bc, 005bffc)
+**Status**: ✅ COMPLETE (5 commits: 8baabac, cb62c9a, 1fd88bc, 005bffc, 3230242)
 
 **Implemented Features**:
 * ✅ Order cancel schemas (OrderCancelIntent, OrderCancelRequest/Response, CancelExecutionRequest/Response)
@@ -253,11 +253,12 @@ Metrics collection, health checks, backup/recovery, feature flags, alerting, run
 * ✅ Complete audit trail (ORDER_CANCEL_REQUESTED/APPROVED/DENIED/EXECUTED/FAILED)
 * ✅ Gated pattern: LLM request → human approval → execution
 * ✅ XOR validation: proposal_id OR broker_order_id (not both)
+* ✅ Complete test suite: 32/32 passing (22 schema + 10 workflow tests)
 
 **Acceptance criteria**:
 * ✅ Cancel passa da approval (no auto-commit)
 * ✅ Audit completo su tutti gli eventi cancel
-* ⏳ Test suite (Task 5 in progress)
+* ✅ Test suite completo con 100% coverage
 
 ---
 
