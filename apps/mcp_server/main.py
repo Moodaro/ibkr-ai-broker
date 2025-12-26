@@ -38,6 +38,7 @@ from packages.kill_switch import KillSwitch, get_kill_switch
 from packages.mcp_security import validate_schema
 from packages.mcp_security.schemas import (
     RequestApprovalSchema,
+    RequestCancelSchema,
     GetPortfolioSchema,
     GetPositionsSchema,
     GetCashSchema,
@@ -53,6 +54,7 @@ from packages.mcp_security.schemas import (
 )
 from packages.risk_engine import RiskEngine, RiskLimits, TradingHours, Decision
 from packages.schemas import OrderIntent
+from packages.schemas.order_cancel import OrderCancelIntent, OrderCancelResponse
 from packages.schemas.market_data import MarketSnapshot, MarketBar, TimeframeType
 from packages.schemas.flex_query import FlexQueryRequest
 from packages.structured_logging import get_logger, setup_logging
@@ -648,6 +650,108 @@ async def handle_request_approval(arguments: dict[str, Any]) -> list[TextContent
     
     except Exception as e:
         emit_audit_event("request_approval", correlation_id, arguments, error=str(e))
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+@validate_schema(RequestCancelSchema)
+async def handle_request_cancel(arguments: dict[str, Any]) -> list[TextContent]:
+    """
+    Request cancellation of an order (GATED TOOL - STRICT VALIDATION).
+    
+    This tool creates a cancel request that requires human approval before execution.
+    Can cancel either a pending proposal (not yet submitted) or an active broker order.
+    
+    **SECURITY**: All parameters validated against RequestCancelSchema.
+    Extra/unknown parameters are REJECTED (prevents parameter injection).
+    
+    Args:
+        account_id: Account identifier (required, 1-100 chars)
+        proposal_id: Internal proposal ID to cancel (optional)
+        broker_order_id: Broker order ID to cancel (optional)
+        reason: Reason for cancellation (required, 10-500 chars)
+        
+    Note: At least one of proposal_id or broker_order_id must be provided.
+        
+    Returns:
+        Cancel approval ID and status (APPROVAL_REQUESTED or ERROR)
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    try:
+        # Check kill switch first
+        if kill_switch and kill_switch.is_enabled():
+            result = {
+                "status": "KILL_SWITCH_ACTIVE",
+                "error": "Trading is currently halted - kill switch is active",
+                "approval_id": None,
+            }
+            emit_audit_event("request_cancel", correlation_id, arguments, result)
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        
+        # Extract validated parameters
+        account_id = arguments.get("account_id")
+        proposal_id = arguments.get("proposal_id")
+        broker_order_id = arguments.get("broker_order_id")
+        reason = arguments.get("reason")
+        
+        emit_audit_event("request_cancel", correlation_id, arguments)
+        
+        if approval_service is None:
+            raise RuntimeError("Approval service not initialized")
+        
+        # Create cancel intent
+        cancel_intent = OrderCancelIntent(
+            account_id=account_id,
+            proposal_id=proposal_id,
+            broker_order_id=broker_order_id,
+            reason=reason,
+        )
+        
+        # Store cancel request in approval system
+        # For now, we'll create a simple approval ID (in future, extend approval_service)
+        cancel_approval_id = f"cancel_{uuid.uuid4().hex[:12]}"
+        
+        # Emit audit event for cancel request
+        audit_event = AuditEventCreate(
+            event_type=EventType.ORDER_CANCEL_REQUESTED,
+            correlation_id=correlation_id,
+            timestamp=datetime.now(timezone.utc),
+            data={
+                "approval_id": cancel_approval_id,
+                "account_id": account_id,
+                "proposal_id": proposal_id,
+                "broker_order_id": broker_order_id,
+                "reason": reason,
+            },
+            metadata={"event_subtype": "mcp_tool_request_cancel"},
+        )
+        audit_store.append_event(audit_event)
+        
+        # Build response
+        response = OrderCancelResponse(
+            approval_id=cancel_approval_id,
+            proposal_id=proposal_id,
+            broker_order_id=broker_order_id,
+            status="PENDING_APPROVAL",
+            reason=reason,
+            requested_at=datetime.now(timezone.utc),
+        )
+        
+        result = {
+            "status": "APPROVAL_REQUESTED",
+            "approval_id": response.approval_id,
+            "proposal_id": response.proposal_id,
+            "broker_order_id": response.broker_order_id,
+            "reason": response.reason,
+            "message": "Cancel request created and awaiting human approval. Use dashboard to approve or deny.",
+        }
+        
+        emit_audit_event("request_cancel", correlation_id, arguments, result)
+        
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+    
+    except Exception as e:
+        emit_audit_event("request_cancel", correlation_id, arguments, error=str(e))
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
@@ -1262,6 +1366,20 @@ async def main():
                 },
             ),
             Tool(
+                name="request_cancel",
+                description="Request cancellation of an order (GATED). Creates cancel request that requires human approval. Can cancel pending proposals or active broker orders. Returns approval_id.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "account_id": {"type": "string", "description": "Account identifier"},
+                        "proposal_id": {"type": "string", "description": "Proposal ID to cancel (optional, provide this OR broker_order_id)"},
+                        "broker_order_id": {"type": "string", "description": "Broker order ID to cancel (optional, provide this OR proposal_id)"},
+                        "reason": {"type": "string", "description": "Reason for cancellation (min 10 chars)"},
+                    },
+                    "required": ["account_id", "reason"],
+                },
+            ),
+            Tool(
                 name="get_market_snapshot",
                 description="Get current market snapshot with bid/ask/last prices and volume",
                 inputSchema={
@@ -1436,6 +1554,8 @@ async def main():
             return await handle_evaluate_risk(arguments)
         elif name == "request_approval":
             return await handle_request_approval(arguments)
+        elif name == "request_cancel":
+            return await handle_request_cancel(arguments)
         elif name == "get_market_snapshot":
             return await handle_get_market_snapshot(arguments)
         elif name == "get_market_bars":
