@@ -98,9 +98,10 @@ class FakeBrokerAdapter:
             Mock portfolio.
 
         Raises:
-            ValueError: If account_id doesn't match.
+            ValueError: If account_id format is invalid.
         """
-        if account_id != self._account_id:
+        # Accept any DU account (paper/simulated accounts)
+        if not account_id.startswith("DU"):
             raise ValueError(f"Invalid account_id: {account_id}")
 
         total_value = sum(
@@ -125,9 +126,10 @@ class FakeBrokerAdapter:
             List of mock open orders.
 
         Raises:
-            ValueError: If account_id doesn't match.
+            ValueError: If account_id format is invalid.
         """
-        if account_id != self._account_id:
+        # Accept any DU account (paper/simulated accounts)
+        if not account_id.startswith("DU"):
             raise ValueError(f"Invalid account_id: {account_id}")
 
         return self._open_orders.copy()
@@ -306,47 +308,16 @@ class FakeBrokerAdapter:
         return True
 
     def _create_mock_positions(self) -> list[Position]:
-        """Create mock positions."""
-        return [
-            Position(
-                instrument=Instrument(
-                    type=InstrumentType.ETF,
-                    symbol="SPY",
-                    exchange="ARCA",
-                    currency="USD",
-                    description="SPDR S&P 500 ETF Trust",
-                ),
-                quantity=Decimal("100"),
-                average_cost=Decimal("450.00"),
-                market_value=Decimal("46000.00"),
-                unrealized_pnl=Decimal("1000.00"),
-                realized_pnl=Decimal("0"),
-                timestamp=datetime.utcnow(),
-            ),
-            Position(
-                instrument=Instrument(
-                    type=InstrumentType.STK,
-                    symbol="AAPL",
-                    exchange="NASDAQ",
-                    currency="USD",
-                    description="Apple Inc.",
-                ),
-                quantity=Decimal("50"),
-                average_cost=Decimal("180.00"),
-                market_value=Decimal("9500.00"),
-                unrealized_pnl=Decimal("500.00"),
-                realized_pnl=Decimal("250.00"),
-                timestamp=datetime.utcnow(),
-            ),
-        ]
+        """Create mock positions (real account DU0369590 has no positions)."""
+        return []
 
     def _create_mock_cash(self) -> list[Cash]:
-        """Create mock cash balances."""
+        """Create cash balances (real account DU0369590 data)."""
         return [
             Cash(
-                currency="USD",
-                available=Decimal("50000.00"),
-                total=Decimal("50000.00"),
+                currency="EUR",
+                available=Decimal("1000083.26"),
+                total=Decimal("1000083.26"),
                 timestamp=datetime.utcnow(),
             )
         ]

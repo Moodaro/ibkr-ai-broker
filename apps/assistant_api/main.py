@@ -2530,6 +2530,114 @@ async def search_instruments(
         raise HTTPException(status_code=500, detail=f"Failed to search instruments: {e}")
 
 
+from pydantic import BaseModel
+
+class SimpleSimulationRequest(BaseModel):
+    """Simple simulation request schema."""
+    account_id: str
+    symbol: str
+    side: str  # BUY or SELL
+    quantity: float
+    order_type: str = "MKT"
+    limit_price: Optional[float] = None
+
+
+@app.post("/api/v1/simulate/simple")
+async def simulate_order_simple(
+    request: SimpleSimulationRequest,
+    broker: BrokerAdapter = Depends(get_broker)
+):
+    """Simplified order simulation for Open WebUI.
+    
+    Args:
+        request: Simulation request with order details
+        broker: Broker adapter
+    
+    Returns:
+        Simulation result with cost estimates
+    """
+    correlation_id = get_correlation_id() or str(uuid.uuid4())
+    
+    try:
+        # Get portfolio
+        portfolio = broker.get_portfolio(request.account_id)
+        
+        # Get market price
+        from packages.broker_ibkr.models import Instrument, InstrumentType
+        instrument = Instrument(
+            symbol=request.symbol,
+            type=InstrumentType.STK,
+            exchange="SMART",
+            currency="USD"
+        )
+        snapshot = broker.get_market_snapshot(instrument)
+        market_price = snapshot.last or snapshot.ask or Decimal("100.00")
+        
+        # Create OrderIntent
+        from packages.schemas.order_intent import OrderIntent
+        from packages.broker_ibkr.models import OrderSide, OrderType, TimeInForce
+        
+        intent = OrderIntent(
+            account_id=request.account_id,
+            instrument=instrument,
+            side=OrderSide.BUY if request.side.upper() == "BUY" else OrderSide.SELL,
+            quantity=Decimal(str(request.quantity)),
+            order_type=OrderType.MKT if request.order_type == "MKT" else OrderType.LMT,
+            limit_price=Decimal(str(request.limit_price)) if request.limit_price else None,
+            stop_price=None,
+            time_in_force=TimeInForce.DAY,
+            reason=f"Simple simulation: {request.side} {request.quantity} {request.symbol}",
+            strategy_tag="openwebui_simulation",
+        )
+        
+        # Run simulation
+        if not simulator:
+            raise HTTPException(500, "Simulator not initialized")
+        
+        result = simulator.simulate(
+            intent=intent,
+            portfolio=portfolio,
+            market_price=market_price,
+        )
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.ORDER_SIMULATED,
+                correlation_id=correlation_id,
+                data={
+                    "symbol": request.symbol,
+                    "side": request.side,
+                    "quantity": str(request.quantity),
+                    "market_price": str(market_price),
+                    "gross_notional": str(result.gross_notional),
+                },
+                metadata={"event_subtype": "simple_simulation"}
+            ))
+        
+        return {
+            "symbol": request.symbol,
+            "side": request.side,
+            "quantity": request.quantity,
+            "market_price": float(market_price),
+            "execution_price": float(result.execution_price) if result.execution_price else float(market_price),
+            "gross_notional": float(result.gross_notional) if result.gross_notional else 0.0,
+            "estimated_fee": float(result.estimated_fee) if result.estimated_fee else 0.0,
+            "estimated_slippage": float(result.estimated_slippage) if result.estimated_slippage else 0.0,
+            "net_notional": float(result.net_notional) if result.net_notional else 0.0,
+            "cash_before": float(result.cash_before) if result.cash_before else 0.0,
+            "cash_after": float(result.cash_after) if result.cash_after else 0.0,
+            "warnings": result.warnings,
+        }
+    
+    except ValueError as e:
+        logger.error("simple_simulation_failed", symbol=request.symbol, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("simple_simulation_failed", symbol=request.symbol, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {e}")
+
+
 @app.post("/api/v1/instruments/resolve")
 async def resolve_instrument(
     symbol: str,
