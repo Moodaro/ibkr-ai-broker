@@ -195,18 +195,23 @@ POST /api/kill-switch/activate
 ### Running Tests
 
 ```bash
-# All tests
+# All tests (excluding integration tests)
+pytest -v -m "not integration"
+
+# All tests including integration (requires IBKR connection)
 pytest -v
 
 # Unit tests only
 pytest tests/unit/ -v
 
-# Integration tests (requires database)
-pytest tests/integration/ -v -m integration
+# Integration tests only (requires IBKR Gateway/TWS running on port 7497)
+pytest -m integration -v
 
 # With coverage
-pytest --cov=packages --cov=apps --cov-report=html
+pytest --cov=packages --cov=apps --cov-report=html -m "not integration"
 ```
+
+**Note**: Integration tests (`-m integration`) require a live IBKR Gateway or TWS connection on port 7497 (paper trading). These tests are automatically skipped in CI/CD and normal development workflows.
 
 ### Code Quality
 

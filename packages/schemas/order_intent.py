@@ -242,5 +242,38 @@ class RiskEvaluationResponse(BaseModel):
     )
     correlation_id: str
 
+class CreateProposalRequest(BaseModel):
+    """Request model for creating a proposal with full validation chain."""
+
+    intent: OrderIntent = Field(
+        ...,
+        description="Validated order intent",
+    )
+    simulation: dict = Field(
+        ...,
+        description="Simulation result",
+    )
+    risk_decision: dict = Field(
+        ...,
+        description="Risk evaluation decision",
+    )
+
+
+class CreateProposalResponse(BaseModel):
+    """Response model for created proposal."""
+
+    proposal_id: str = Field(
+        ...,
+        description="Unique proposal identifier",
+    )
+    state: str = Field(
+        ...,
+        description="Current proposal state",
+    )
+    message: str = Field(
+        ...,
+        description="Success message",
+    )
+    correlation_id: str
     model_config = {"frozen": True}
 

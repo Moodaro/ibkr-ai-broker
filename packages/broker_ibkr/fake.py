@@ -51,7 +51,7 @@ class FakeBrokerAdapter:
     Useful for unit tests and development.
     """
 
-    def __init__(self, account_id: str = "DU123456") -> None:
+    def __init__(self, account_id: str = "DU0369590") -> None:
         """Initialize fake adapter.
 
         Args:
@@ -842,6 +842,9 @@ class FakeBrokerAdapter:
         query = query.strip().upper()
         candidates = []
         
+        # Wildcard search - return all matching filters
+        is_wildcard = query == "*"
+        
         for contract in self._instrument_db.values():
             # Apply filters
             if type and contract.type != type:
@@ -852,7 +855,14 @@ class FakeBrokerAdapter:
                 continue
             
             # Calculate match score
-            score = self._calculate_match_score(query, contract.symbol, contract.name or "")
+            if is_wildcard:
+                # For wildcard, assign score based on popularity (stocks/ETFs first)
+                if contract.type in ["STK", "ETF"]:
+                    score = 0.8
+                else:
+                    score = 0.5
+            else:
+                score = self._calculate_match_score(query, contract.symbol, contract.name or "")
             
             if score > 0:
                 candidates.append(SearchCandidate(

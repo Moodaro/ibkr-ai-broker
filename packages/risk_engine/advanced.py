@@ -222,15 +222,20 @@ class AdvancedRiskEngine:
         if portfolio_value <= 0:
             return "Portfolio value invalid for volatility sizing"
 
-        # Daily volatility (assume 252 trading days)
-        daily_vol = effective_vol / math.sqrt(252)
-        metrics["daily_volatility"] = daily_vol
+        # Check min/max absolute size limits FIRST
+        if position_value < self.limits.min_position_size:
+            return f"R9: Position size ${position_value:,.2f} below minimum ${self.limits.min_position_size:,.2f}"
 
-        # Position risk = position_value * daily_volatility
-        # This represents 1-day 1-sigma risk contribution
-        position_risk = float(position_value) * daily_vol
+        if position_value > self.limits.max_position_size:
+            return f"R9: Position size ${position_value:,.2f} exceeds maximum ${self.limits.max_position_size:,.2f}"
+
+        # Use annual volatility directly for position risk calculation
+        # Position risk = position_value * volatility (as % of portfolio)
+        # This represents the volatility contribution of this position
+        position_risk = float(position_value) * effective_vol
         portfolio_risk_pct = (position_risk / float(portfolio_value)) * 100
 
+        metrics["symbol_volatility"] = effective_vol
         metrics["position_risk_pct"] = portfolio_risk_pct
 
         # Check against limit
@@ -240,7 +245,7 @@ class AdvancedRiskEngine:
             suggested_size = (
                 float(portfolio_value)
                 * self.limits.max_position_volatility
-                / daily_vol
+                / effective_vol
             )
             metrics["suggested_position_size"] = suggested_size
 
@@ -248,13 +253,6 @@ class AdvancedRiskEngine:
                 f"R9: Position risk {portfolio_risk_pct:.2f}% exceeds limit {max_risk_pct:.2f}%. "
                 f"Suggested max size: ${suggested_size:,.0f}"
             )
-
-        # Check min/max absolute size limits
-        if position_value < self.limits.min_position_size:
-            return f"R9: Position size ${position_value:,.2f} below minimum ${self.limits.min_position_size:,.2f}"
-
-        if position_value > self.limits.max_position_size:
-            return f"R9: Position size ${position_value:,.2f} exceeds maximum ${self.limits.max_position_size:,.2f}"
 
         return None
 

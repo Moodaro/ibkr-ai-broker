@@ -29,6 +29,7 @@ class EventType(str, Enum):
     ORDER_PROPOSED = "OrderProposed"
     ORDER_SIMULATED = "OrderSimulated"
     RISK_GATE_EVALUATED = "RiskGateEvaluated"
+    PROPOSAL_CREATED = "ProposalCreated"
     APPROVAL_REQUESTED = "ApprovalRequested"
     APPROVAL_GRANTED = "ApprovalGranted"
     APPROVAL_DENIED = "ApprovalDenied"

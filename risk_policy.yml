@@ -1,622 +1,100 @@
 # Risk Policy Configuration for IBKR AI Broker
 # This file defines risk limits and trading rules (R1-R8)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    assert len(decision.violated_rules) >= 3    # Combined reason mentions multiple rules        assert "R12" in decision.violated_rules  # Time restriction    assert "R9" in decision.violated_rules  # Volatility    assert "R7" in decision.violated_rules  # Daily trades    assert decision.decision == Decision.REJECT    # Multiple violations        )        volatility_metrics=volatility_metrics,        current_time=current_time,        simulation=simulation,        portfolio=portfolio,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 9, 35, 0)    # Market open time (R12 violation)        volatility_metrics = VolatilityMetrics(symbol_volatility=0.80)    # High volatility (R9 violation)        )        estimated_slippage=Decimal("20"),        estimated_fee=Decimal("10"),        gross_notional=Decimal("20000"),        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(        )        advanced_engine=advanced_engine,        daily_pnl=Decimal("0"),        daily_trades_count=50,  # At limit        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(    # Max daily trades reached (R7)        )        market_close_time="16:00",        market_open_time="09:30",        limits=advanced_limits,    advanced_engine = AdvancedRiskEngine(    """Test that multiple rule violations from R1-R8 and R9-R12 are combined."""):    basic_limits, trading_hours, advanced_limits, portfolio, sample_intentdef test_multiple_rules_violated_combined(    assert "volatility" not in decision.metrics  # No advanced metrics    assert "R1-R8)" in decision.reason  # No R9-R12 suffix    assert decision.violated_rules == []    assert decision.decision == Decision.APPROVE    # Only R1-R8 evaluated        )        # volatility_metrics not provided        current_time=current_time,        simulation=simulation,        portfolio=portfolio,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 15, 0, 0)    # No volatility metrics needed        )        estimated_slippage=Decimal("10"),        estimated_fee=Decimal("5"),        gross_notional=Decimal("5000"),        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(        )        # advanced_engine=None (default)        daily_pnl=Decimal("0"),        daily_trades_count=0,        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(    # No advanced engine    """Test that RiskEngine works without AdvancedRiskEngine (backward compatible)."""):    basic_limits, trading_hours, portfolio, sample_intentdef test_engine_without_advanced_backward_compatible(    assert "market open" in decision.reason.lower()    assert "R12" in decision.violated_rules    assert decision.decision == Decision.REJECT    # R12 time restriction violation        )        volatility_metrics=volatility_metrics,        current_time=current_time,        simulation=simulation,        portfolio=portfolio,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 9, 35, 0)    # 09:35 ET = 5 minutes after market open (within 10-min restriction)        volatility_metrics = VolatilityMetrics(symbol_volatility=0.15)        )        estimated_slippage=Decimal("10"),        estimated_fee=Decimal("5"),        gross_notional=Decimal("5000"),        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(        )        advanced_engine=advanced_engine,        daily_pnl=Decimal("0"),        daily_trades_count=0,        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(        )        market_close_time="16:00",        market_open_time="09:30",        limits=advanced_limits,    advanced_engine = AdvancedRiskEngine(    """Test that R12 rejects orders during market open volatility period."""):    basic_limits, trading_hours, advanced_limits, portfolio, sample_intentdef test_r12_market_open_rejects(    assert decision.metrics["drawdown_pct"] > 10.0    assert "drawdown" in decision.reason.lower()    assert "R11" in decision.violated_rules    assert decision.decision == Decision.REJECT    # R11 drawdown violation        )        volatility_metrics=volatility_metrics,        current_time=current_time,        simulation=simulation,        portfolio=portfolio_drawdown,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 15, 0, 0)    volatility_metrics = VolatilityMetrics(symbol_volatility=0.15)        )        estimated_slippage=Decimal("10"),        estimated_fee=Decimal("5"),        gross_notional=Decimal("5000"),        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(        )        advanced_engine=advanced_engine,        daily_pnl=Decimal("0"),        daily_trades_count=0,        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(        )        market_close_time="16:00",        market_open_time="09:30",        high_water_mark=Decimal("100000"),  # HWM set        limits=advanced_limits,    advanced_engine = AdvancedRiskEngine(        )        exposure=Decimal("0"),        cash=Decimal("50000"),        total_value=Decimal("88000"),        positions=[],        ],            )                cash=Decimal("50000"),                total_value=Decimal("88000"),  # Down from 100k HWM                account_id="DU12345",            Account(        accounts=[    portfolio_drawdown = Portfolio(    # Portfolio in 12% drawdown (exceeds 10% limit)    """Test that R11 drawdown protection halts trading."""):    basic_limits, trading_hours, advanced_limits, portfolio, sample_intentdef test_r11_drawdown_protection_rejects(    assert "R1" not in decision.violated_rules  # Basic checks passed    assert "R9" in decision.violated_rules    assert decision.decision == Decision.REJECT    # R9 violation (high volatility)        )        volatility_metrics=volatility_metrics,        current_time=current_time,        simulation=simulation,        portfolio=portfolio,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 15, 0, 0)        )        symbol_volatility=0.80,  # 80% annual volatility = very high risk    volatility_metrics = VolatilityMetrics(    # HIGH volatility → R9 violation        )        estimated_slippage=Decimal("20"),        estimated_fee=Decimal("10"),        gross_notional=Decimal("20000"),        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(    # Simulation: $20k position (passes R1-R8)        )        advanced_engine=advanced_engine,        daily_pnl=Decimal("0"),        daily_trades_count=0,        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(        )        market_close_time="16:00",        market_open_time="09:30",        limits=advanced_limits,    advanced_engine = AdvancedRiskEngine(    """Test that R1-R8 pass but R9-R12 reject."""):    basic_limits, trading_hours, advanced_limits, portfolio, sample_intentdef test_basic_pass_advanced_reject(    assert "R9" not in decision.violated_rules    # Advanced rules not checked (R1 fails first)    assert "R1" in decision.violated_rules    assert decision.decision == Decision.REJECT    # R1 violation        )        volatility_metrics=volatility_metrics,        current_time=current_time,        simulation=simulation,        portfolio=portfolio,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 15, 0, 0)    volatility_metrics = VolatilityMetrics(symbol_volatility=0.15)        )        estimated_slippage=Decimal("20"),        estimated_fee=Decimal("10"),        gross_notional=Decimal("60000"),  # Exceeds 50k limit        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(    # Simulation exceeds R1 max notional        )        advanced_engine=advanced_engine,        daily_pnl=Decimal("0"),        daily_trades_count=0,        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(        )        market_close_time="16:00",        market_open_time="09:30",        limits=advanced_limits,    advanced_engine = AdvancedRiskEngine(    """Test that R1-R8 rejection prevents R9-R12 evaluation."""):    basic_limits, trading_hours, advanced_limits, portfolio, sample_intentdef test_basic_rule_rejects_advanced_not_called(    assert "volatility" in decision.metrics  # Advanced metrics present    assert "R1-R8 + R9-R12" in decision.reason    assert decision.violated_rules == []    assert decision.decision == Decision.APPROVE    # All checks pass        )        volatility_metrics=volatility_metrics,        current_time=current_time,        simulation=simulation,        portfolio=portfolio,        intent=sample_intent,    decision = engine.evaluate(        current_time = datetime(2025, 12, 26, 15, 0, 0)    # Evaluate during market hours (15:00 UTC = 10:00 ET)        )        symbol_volatility=0.15,  # 15% annual volatility    volatility_metrics = VolatilityMetrics(    # Low volatility metrics        )        execution_price=Decimal("100"),        estimated_slippage=Decimal("10"),        estimated_fee=Decimal("5"),        gross_notional=Decimal("5000"),        status=SimulationStatus.SUCCESS,    simulation = SimulationResult(    # Simulation: $5000 position, low volatility        )        advanced_engine=advanced_engine,        daily_pnl=Decimal("0"),        daily_trades_count=0,        trading_hours=trading_hours,        limits=basic_limits,    engine = RiskEngine(        )        market_close_time="16:00",        market_open_time="09:30",        limits=advanced_limits,    advanced_engine = AdvancedRiskEngine(    # Setup integrated engine    """Test that order passes all R1-R12 checks."""):    basic_limits, trading_hours, advanced_limits, portfolio, sample_intentdef test_integrated_engine_all_checks_pass(    )        strategy_tag="test_integration",        reason="Integration test order for R1-R12",        order_type=OrderType.MKT,        quantity=Decimal("50"),        side=OrderSide.BUY,        ),            exchange="NASDAQ",            currency="USD",            type=InstrumentType.STK,            symbol="AAPL",        instrument=Instrument(        account_id="DU12345",    return OrderIntent(    """Sample order intent."""def sample_intent():@pytest.fixture    )        exposure=Decimal("0"),        cash=Decimal("50000"),        total_value=Decimal("100000"),        positions=[],        ],            )                cash=Decimal("50000"),                total_value=Decimal("100000"),                account_id="DU12345",            Account(        accounts=[    return Portfolio(    """Sample portfolio."""def portfolio():@pytest.fixture    )        enable_time_restrictions=True,        avoid_market_close_minutes=10,        avoid_market_open_minutes=10,        enable_drawdown_halt=True,        max_drawdown_pct=10.0,  # 10% max drawdown        max_position_size=Decimal("50000"),        min_position_size=Decimal("100"),        volatility_scaling_enabled=True,        max_position_volatility=0.02,  # 2% max portfolio risk    return AdvancedRiskLimits(    """Advanced risk limits (R9-R12)."""def advanced_limits():@pytest.fixture    )        allow_after_hours=False,        allow_pre_market=False,        market_close_utc="21:00",        market_open_utc="14:30",    return TradingHours(    """Trading hours configuration."""def trading_hours():@pytest.fixture    )        max_daily_loss=Decimal("5000"),        max_daily_trades=50,        min_daily_volume=100000,        max_slippage_bps=Decimal("50"),        max_sector_exposure_pct=Decimal("30"),        max_position_pct=Decimal("10"),        max_notional=Decimal("50000"),    return RiskLimits(    """Basic risk limits (R1-R8)."""def basic_limits():@pytest.fixturefrom packages.trade_sim.models import SimulationResult, SimulationStatusfrom packages.schemas import OrderIntent)    VolatilityMetrics,    TradingHours,    RiskLimits,    RiskEngine,    Decision,    AdvancedRiskLimits,    AdvancedRiskEngine,from packages.risk_engine import ()    OrderType,    OrderSide,    InstrumentType,    Instrument,from packages.broker_ibkr.models import (from packages.broker_ibkr import Portfolio, Position, Accountimport pytestfrom decimal import Decimalfrom datetime import datetime, time"""work together correctly, combining violations and metrics.Tests that basic risk engine (R1-R8) and advanced risk engine (R9-R12)
-# Version and metadata
-version: "1.0"
-last_updated: "2025-12-25"
-description: "Conservative risk policy for paper trading phase"
-
-# Risk Limits
+#
+# Version: 1.0
+# Last updated: 2025-12-26
+# Environment: Paper Trading (Conservative Limits)
+
+# KILL SWITCH - Set enabled=true to halt all trading
+kill_switch:
+  enabled: false
+  reason: ""
+
+# Risk Limits (R1-R8)
 limits:
-  # R1: Maximum notional value per order
-  # Limits single order size to prevent excessive capital deployment
-  max_notional: 50000.00  # USD
+  # R1: Maximum notional value per order (USD)
+  max_notional: 50000.00
 
   # R2: Maximum position size as percentage of portfolio
-  # Prevents over-concentration in single position
-  max_position_pct: 10.0  # %
+  max_position_pct: 10.0
 
-  # R3: Maximum sector exposure
-  # Limits exposure to single sector for diversification
-  max_sector_exposure_pct: 30.0  # %
+  # R3: Maximum sector exposure percentage
+  max_sector_exposure_pct: 30.0
 
-  # R4: Maximum slippage tolerance
-  # Rejects orders with excessive expected slippage
-  max_slippage_bps: 50  # basis points (0.5%)
+  # R4: Maximum slippage in basis points (50 bps = 0.5%)
+  max_slippage_bps: 50
 
-  # R6: Minimum liquidity requirement
-  # Ensures adequate daily volume for execution
-  min_daily_volume: 100000  # shares
+  # R6: Minimum daily trading volume (shares/contracts)
+  min_daily_volume: 100000
 
-  # R7: Maximum trades per day
-  # Prevents overtrading and excessive transaction costs
+  # R7: Maximum number of trades per day
   max_daily_trades: 50
 
-  # R8: Maximum daily loss
-  # Circuit breaker to limit daily drawdown
-  max_daily_loss: 5000.00  # USD
+  # R8: Maximum daily loss (USD)
+  max_daily_loss: 5000.00
 
 # Trading Hours (R5)
 trading_hours:
-  # Allow trading during pre-market (04:00-09:30 ET / 09:00-14:30 UTC)
   allow_pre_market: false
-
-  # Allow trading during after-hours (16:00-20:00 ET / 21:00-01:00 UTC)
   allow_after_hours: false
+  market_open_utc: "14:30"  # 9:30 AM EST
+  market_close_utc: "21:00"  # 4:00 PM EST
 
-  # Regular market hours (09:30-16:00 ET / 14:30-21:00 UTC)
-  market_open_utc: "14:30"  # HH:MM format
-  market_close_utc: "21:00"
-
-# Kill Switch Configuration
-kill_switch:
-  # Global kill switch - when enabled, all trades rejected
-  enabled: false
-
-  # Reason for kill switch activation (when enabled)
-  reason: ""
-
-# Warnings Configuration
-warnings:
-  # Generate warning when notional is above this % of max
-  notional_warning_threshold_pct: 80.0
-
-  # Generate warning when position size is above this % of max
-  position_warning_threshold_pct: 80.0
-
-  # Generate warning when daily trades approach limit
-  daily_trades_warning_threshold: 40
-
-# Emergency Contacts (for manual review escalation)
-emergency_contacts:
-  - name: "Risk Manager"
-    email: "risk@example.com"
-  - name: "Portfolio Manager"
-    email: "pm@example.com"
-
-# Rule Enablement (for gradual rollout or testing)
-# Set to false to disable specific rules temporarily
+# Per-rule enable/disable toggles
 rules_enabled:
-  R1_max_notional: true
-  R2_max_position: true
-  R3_max_sector: true  # Note: requires sector mapping data
-  R4_max_slippage: true
-  R5_trading_hours: true
-  R6_min_liquidity: false  # Disabled in MVP (requires market data)
-  R7_max_daily_trades: true
-  R8_max_daily_loss: true
-  # Advanced rules (R9-R12) - enabled when AdvancedRiskEngine configured
-  R9_volatility_sizing: true
-  R10_correlation_limits: false  # Disabled (requires correlation matrix)
-  R11_drawdown_protection: true
-  R12_time_restrictions: true
+  R1: true  # Max notional
+  R2: true  # Max position %
+  R3: true  # Max sector exposure
+  R4: true  # Max slippage
+  R5: true  # Trading hours
+  R6: false # Min daily volume (disabled - not always enforceable)
+  R7: true  # Max daily trades
+  R8: true  # Max daily loss
 
-# Advanced Risk Configuration (R9-R12)
-# These rules require AdvancedRiskEngine to be configured
+# Advanced Risk Rules (R9-R12)
 advanced_rules:
-  # R9: Volatility-aware position sizing
-  # Uses Kelly criterion-inspired approach to size positions based on volatility
+  # R9: Volatility-adjusted position sizing
   volatility_sizing:
     enabled: true
-    # Maximum portfolio risk per position (as fraction of portfolio value)
-    # Example: 0.02 = max 2% of portfolio at risk from 1-day 1-sigma move
-    max_position_volatility: 0.02  # 2%
-    
-    # Absolute position size limits (regardless of volatility)
-    min_position_size: 100.00  # USD
-    max_position_size: 50000.00  # USD
-    
-    # When true, adjusts position size based on volatility
-    # When false, only enforces min/max absolute limits
+    max_position_volatility: 0.02  # 2% max portfolio risk per position
+    min_position_size: 100.00
+    max_position_size: 50000.00
     volatility_scaling_enabled: true
 
-  # R10: Correlation exposure limits (FUTURE - not yet implemented)
-  # Limits total exposure to correlated assets
-  correlation_limits:
-    enabled: false  # Requires correlation matrix data
-    # Maximum exposure to correlated assets (as % of portfolio)
-    max_correlated_exposure_pct: 30.0  # %
-    # Correlation threshold (consider correlated if r > this)
-    correlation_threshold: 0.7  # Pearson correlation coefficient
+  # R10: Correlation exposure (placeholder)
+  correlation:
+    enabled: false
+    max_correlated_exposure_pct: 30.0
+    correlation_threshold: 0.7
 
   # R11: Drawdown protection
-  # Halts trading if portfolio drawdown exceeds limit
   drawdown_protection:
     enabled: true
-    # Maximum drawdown from high water mark before halting trading
-    max_drawdown_pct: 10.0  # %
-    # When true, REJECT all orders if drawdown exceeded
-    # When false, only generate warnings
+    max_drawdown_pct: 10.0
     enable_drawdown_halt: true
 
   # R12: Time-of-day restrictions
-  # Avoids high-volatility periods (market open/close)
   time_restrictions:
     enabled: true
-    # Avoid first N minutes after market open (high volatility)
     avoid_market_open_minutes: 10
-    # Avoid last N minutes before market close (high volatility)
     avoid_market_close_minutes: 10
-    # Market hours (for time-of-day checks)
-    market_open_time: "09:30"  # HH:MM Eastern Time
-    market_close_time: "16:00"  # HH:MM Eastern Time
 
-# Notes on Advanced Rules
-# - R9 requires VolatilityMetrics (symbol volatility, VIX, or beta)
-# - R10 requires correlation matrix (deferred to future version)
-# - R11 tracks high water mark automatically
-# - R12 uses market_open_time/market_close_time from this config
-# Volatility Data Provider Configuration
-# Used by AdvancedRiskEngine (R9) for volatility-aware position sizing
-volatility_provider:
-  # Provider type: "historical", "mock", "ibkr", "yfinance"
-  # - historical: Calculate from price history via broker adapter
-  # - mock: Fixed values for testing
-  # - ibkr: Use IBKR option-implied volatility (future)
-  # - yfinance: Use Yahoo Finance historical data (future)
-  provider_type: "historical"
-  
-  # Fallback provider (used if primary fails)
-  # Typically "mock" with conservative defaults
-  fallback_provider: "mock"
-  fallback_default_volatility: 0.25  # 25% default for unknown symbols
-  
-  # Caching settings
-  cache_enabled: true
-  cache_ttl_seconds: 3600  # 1 hour (3600s)
-  
-  # Historical provider settings
-  historical:
-    lookback_days: 30  # Number of days for volatility calculation
-    annualization_factor: 252  # Trading days per year
-    min_data_points: 10  # Minimum bars required for calculation
-  
-  # Mock provider settings (used as fallback or in dev/test)
-  mock:
-    default_volatility: 0.20  # 20% default
-    market_volatility: 0.15  # 15% VIX equivalent
-    # Symbol-specific overrides (for testing specific scenarios)
-    symbol_overrides:
-      AAPL: 0.18  # 18%
-      TSLA: 0.50  # 50%
-      SPY: 0.15   # 15%
+# Feature Flags
+feature_flags:
+  auto_approval: false
+  auto_approval_threshold: 1000.00
+  enhanced_logging: true
+  live_trading: false
+
+# Monitoring & Alerts
+monitoring:
+  enable_health_checks: true
+  health_check_interval_seconds: 60
+  alert_on_risk_rejection: true
+  alert_on_kill_switch_activation: true
+
+# Notes:
+# - These are conservative limits for paper trading phase
+# - Review and adjust before enabling live trading
+# - Always test changes in paper mode first
+# - See LIVE_TRADING.md for pre-live checklist

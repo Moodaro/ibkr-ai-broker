@@ -175,15 +175,15 @@ def test_r9_high_volatility_rejected(engine, portfolio, high_vol_metrics):
         estimated_slippage=Decimal("20"),
     )
 
-    # 50% vol * $20k = ~$6300 daily risk
-    # $6300 / $100k portfolio = 6.3% risk > 2% limit
+    # 50% vol * $20k = $10,000 position risk
+    # $10,000 / $100k portfolio = 10% risk > 2% limit
     decision = engine.evaluate_advanced(
         intent, portfolio, simulation, high_vol_metrics
     )
 
     assert decision.decision == Decision.REJECT
     assert "R9" in decision.violated_rules
-    assert "Position risk 6.3" in decision.reason  # Approx 6.3%
+    assert "Position risk 10" in decision.reason  # Approx 10%
     assert "suggested_position_size" in decision.metrics
 
 
@@ -212,10 +212,10 @@ def test_r9_volatility_scaling_calculates_suggested_size(
     assert decision.decision == Decision.REJECT
     assert "R9" in decision.violated_rules
 
-    # Suggested size should be: portfolio * max_risk / daily_vol
-    # $100k * 0.02 / (0.50/sqrt(252)) ~= $6,350
+    # Suggested size should be: portfolio * max_risk / volatility
+    # $100k * 0.02 / 0.50 = $4,000
     suggested = decision.metrics["suggested_position_size"]
-    assert 6000 < suggested < 7000  # Approx $6,350
+    assert 3800 < suggested < 4200  # Approx $4,000
 
 
 def test_r9_beta_based_volatility(engine, portfolio, market_vol_with_beta):

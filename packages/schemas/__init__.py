@@ -25,6 +25,8 @@ from .order_intent import (
     RiskEvaluationResponse,
     SimulationRequest,
     SimulationResponse,
+    CreateProposalRequest,
+    CreateProposalResponse,
 )
 from .submission import (
     SubmitOrderRequest,
@@ -72,6 +74,8 @@ __all__ = [
     "RiskEvaluationResponse",
     "SimulationRequest",
     "SimulationResponse",
+    "CreateProposalRequest",
+    "CreateProposalResponse",
     # Order submission
     "SubmitOrderRequest",
     "SubmitOrderResponse",

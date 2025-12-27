@@ -128,8 +128,9 @@ def get_broker_adapter(
     import os
     
     # Use provided type or check environment variable
+    # NOTE: Default to "fake" instead of "auto" to avoid asyncio issues in FastAPI
     if broker_type is None:
-        broker_type = os.getenv("BROKER_TYPE", "auto")
+        broker_type = os.getenv("BROKER_TYPE", "fake")
     
     return create_broker_adapter(
         broker_type=broker_type,

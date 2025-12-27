@@ -164,7 +164,7 @@ class HealthMonitor:
                     # Log to audit store
                     self.audit_store.append_event(
                         AuditEvent(
-                            event_type=EventType.SYSTEM_EVENT,
+                            event_type=EventType.ERROR_OCCURRED,
                             correlation_id="health_monitor",
                             timestamp=now,
                             data={
@@ -179,7 +179,7 @@ class HealthMonitor:
                 # Alert condition check failed - log but continue
                 self.audit_store.append_event(
                     AuditEvent(
-                        event_type=EventType.SYSTEM_EVENT,
+                        event_type=EventType.ERROR_OCCURRED,
                         correlation_id="health_monitor",
                         timestamp=now,
                         data={

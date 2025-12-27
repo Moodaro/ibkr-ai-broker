@@ -33,11 +33,17 @@ pyright
 # or
 mypy .
 
-# Run tests
-pytest -v
+# Run tests (excluding integration tests that require IBKR connection)
+pytest -v -m "not integration"
 
 # Run tests with coverage
-pytest --cov=packages --cov=apps --cov-report=html
+pytest --cov=packages --cov=apps --cov-report=html -m "not integration"
+
+# Run integration tests (requires IBKR Gateway/TWS on port 7497)
+pytest -m integration -v
+
+# Run ALL tests including integration
+pytest -v
 ```
 
 ### Run services

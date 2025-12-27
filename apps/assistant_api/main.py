@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
@@ -55,6 +56,8 @@ from packages.schemas import (
     SimulationResponse,
     SubmitOrderRequest,
     SubmitOrderResponse,
+    CreateProposalRequest,
+    CreateProposalResponse,
 )
 from packages.trade_sim import (
     SimulationConfig,
@@ -177,6 +180,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Initialize broker adapter (auto-detect with fallback)
     broker = get_broker_adapter()
     
+    # Connect broker
+    try:
+        broker.connect()
+        logger.info("broker_connected", type=type(broker).__name__)
+    except Exception as e:
+        logger.warning("broker_connection_failed", error=str(e))
+    
     # Initialize reconciler
     get_reconciler(broker_adapter=broker)
     
@@ -212,6 +222,15 @@ app = FastAPI(
     description="Paper trading assistant with LLM proposals and deterministic risk gates",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Add CORS middleware for Open WebUI access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Open WebUI can be on any port/domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Add correlation ID middleware
@@ -646,6 +665,109 @@ async def evaluate_risk(request: RiskEvaluationRequest) -> RiskEvaluationRespons
         raise HTTPException(
             status_code=500,
             detail=f"Risk evaluation failed: {str(e)}",
+        )
+
+
+@app.post("/api/v1/proposals/create", response_model=CreateProposalResponse)
+async def create_proposal(request: CreateProposalRequest) -> CreateProposalResponse:
+    """
+    Create and store a proposal for approval.
+
+    This endpoint accepts a validated OrderIntent, simulation result, and risk decision,
+    creates an OrderProposal, and stores it for the approval workflow.
+
+    Args:
+        request: Create proposal request with intent, simulation, and risk decision.
+
+    Returns:
+        CreateProposalResponse with proposal_id and state.
+
+    Raises:
+        HTTPException: If approval service or audit store not initialized.
+    """
+    if not approval_service:
+        raise HTTPException(
+            status_code=500,
+            detail="Approval service not initialized",
+        )
+    
+    if not audit_store:
+        raise HTTPException(
+            status_code=500,
+            detail="Audit store not initialized",
+        )
+    
+    correlation_id = get_correlation_id() or "no-correlation-id"
+    
+    try:
+        # Parse risk decision from dict
+        from packages.risk_engine import RiskDecision
+        from packages.trade_sim import SimulationResult
+        
+        simulation = SimulationResult(**request.simulation)
+        risk_decision = RiskDecision(**request.risk_decision)
+        
+        # Check if risk decision was APPROVE
+        if risk_decision.is_rejected():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot create proposal for rejected order. Reason: {risk_decision.reason}",
+            )
+        
+        # Create and store proposal
+        proposal = approval_service.create_and_store_proposal(
+            intent=request.intent,
+            sim_result=simulation,
+            risk_decision=risk_decision,
+            correlation_id=correlation_id,
+        )
+        
+        # Emit audit event
+        event = AuditEventCreate(
+            event_type=EventType.PROPOSAL_CREATED,
+            correlation_id=correlation_id,
+            data={
+                "proposal_id": proposal.proposal_id,
+                "state": proposal.state.value,
+                "symbol": request.intent.instrument.symbol,
+                "side": request.intent.side.value,
+                "quantity": str(request.intent.quantity),
+            },
+        )
+        audit_store.append_event(event)
+        
+        # Record metrics
+        collector = get_metrics_collector()
+        collector.increment_proposal_count(
+            symbol=request.intent.instrument.symbol,
+            state=proposal.state.value,
+        )
+        
+        return CreateProposalResponse(
+            proposal_id=proposal.proposal_id,
+            state=proposal.state.value,
+            message=f"Proposal {proposal.proposal_id} created successfully",
+            correlation_id=correlation_id,
+        )
+    
+    except HTTPException:
+        raise
+    except ValidationError as e:
+        raise
+    except Exception as e:
+        event = AuditEventCreate(
+            event_type=EventType.ERROR_OCCURRED,
+            correlation_id=correlation_id,
+            data={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            },
+        )
+        audit_store.append_event(event)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create proposal: {str(e)}",
         )
 
 
@@ -2036,6 +2158,147 @@ async def check_performance_degradation(operation_name: str, window_minutes: int
         raise HTTPException(status_code=500, detail=f"Failed to check degradation: {e}")
 
 
+# ===== Portfolio Endpoints =====
+
+@app.get("/api/v1/portfolio")
+async def get_portfolio(
+    account_id: str,
+    broker: BrokerAdapter = Depends(get_broker)
+):
+    """Get complete portfolio snapshot including positions and cash.
+    
+    Args:
+        account_id: Account identifier (e.g., "DU1234567")
+        
+    Returns:
+        Portfolio with positions, cash, and total value
+    """
+    try:
+        portfolio = broker.get_portfolio(account_id)
+        
+        logger.info("portfolio_retrieved",
+                   account_id=account_id,
+                   positions=len(portfolio.positions),
+                   total_value=str(portfolio.total_value))
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.PORTFOLIO_SNAPSHOT_TAKEN,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "get_portfolio",
+                    "account_id": account_id,
+                    "position_count": len(portfolio.positions),
+                    "total_value": str(portfolio.total_value),
+                },
+                metadata={"event_subtype": "portfolio_requested"}
+            ))
+        
+        return {
+            "account_id": portfolio.account_id,
+            "total_value": str(portfolio.total_value),
+            "timestamp": portfolio.timestamp.isoformat(),
+            "positions": [
+                {
+                    "symbol": pos.instrument.symbol,
+                    "type": pos.instrument.type.value,
+                    "exchange": pos.instrument.exchange,
+                    "currency": pos.instrument.currency,
+                    "description": pos.instrument.description or "",
+                    "quantity": str(pos.quantity),
+                    "average_cost": str(pos.average_cost),
+                    "market_value": str(pos.market_value),
+                    "unrealized_pnl": str(pos.unrealized_pnl),
+                    "realized_pnl": str(pos.realized_pnl),
+                }
+                for pos in portfolio.positions
+            ],
+            "cash": [
+                {
+                    "currency": cash.currency,
+                    "available": str(cash.available),
+                    "total": str(cash.total),
+                }
+                for cash in portfolio.cash
+            ],
+        }
+    except ValueError as e:
+        logger.error("portfolio_invalid_account",
+                    account_id=account_id,
+                    error=str(e))
+        raise HTTPException(status_code=400, detail=f"Invalid account: {e}")
+    except Exception as e:
+        logger.error("portfolio_failed",
+                    account_id=account_id,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get portfolio: {e}")
+
+
+@app.get("/api/v1/positions")
+async def get_positions(
+    account_id: str,
+    broker: BrokerAdapter = Depends(get_broker)
+):
+    """Get list of open positions.
+    
+    Args:
+        account_id: Account identifier (e.g., "DU1234567")
+        
+    Returns:
+        List of open positions with details
+    """
+    try:
+        portfolio = broker.get_portfolio(account_id)
+        positions = portfolio.positions
+        
+        logger.info("positions_retrieved",
+                   account_id=account_id,
+                   count=len(positions))
+        
+        # Emit audit event
+        if audit_store:
+            audit_store.append_event(AuditEventCreate(
+                event_type=EventType.PORTFOLIO_SNAPSHOT_TAKEN,
+                correlation_id=get_correlation_id(),
+                data={
+                    "endpoint": "get_positions",
+                    "account_id": account_id,
+                    "position_count": len(positions),
+                },
+                metadata={"event_subtype": "positions_requested"}
+            ))
+        
+        return {
+            "account_id": account_id,
+            "positions": [
+                {
+                    "symbol": pos.instrument.symbol,
+                    "type": pos.instrument.type.value,
+                    "exchange": pos.instrument.exchange,
+                    "currency": pos.instrument.currency,
+                    "description": pos.instrument.description or "",
+                    "quantity": str(pos.quantity),
+                    "average_cost": str(pos.average_cost),
+                    "market_value": str(pos.market_value),
+                    "unrealized_pnl": str(pos.unrealized_pnl),
+                    "realized_pnl": str(pos.realized_pnl),
+                }
+                for pos in positions
+            ],
+        }
+    except ValueError as e:
+        logger.error("positions_invalid_account",
+                    account_id=account_id,
+                    error=str(e))
+        raise HTTPException(status_code=400, detail=f"Invalid account: {e}")
+    except Exception as e:
+        logger.error("positions_failed",
+                    account_id=account_id,
+                    error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get positions: {e}")
+
+
 # ===== Market Data Endpoints =====
 
 @app.get("/api/v1/market/snapshot")
@@ -2059,7 +2322,7 @@ async def get_market_snapshot(
         # Emit audit event
         if audit_store:
             audit_store.append_event(AuditEventCreate(
-                event_type=EventType.CUSTOM,
+                event_type=EventType.MARKET_SNAPSHOT_TAKEN,
                 correlation_id=get_correlation_id(),
                 data={
                     "endpoint": "get_market_snapshot",
@@ -2129,7 +2392,7 @@ async def get_market_bars(
         # Emit audit event
         if audit_store:
             audit_store.append_event(AuditEventCreate(
-                event_type=EventType.CUSTOM,
+                event_type=EventType.MARKET_SNAPSHOT_TAKEN,
                 correlation_id=get_correlation_id(),
                 data={
                     "endpoint": "get_market_bars",
@@ -2175,7 +2438,7 @@ async def get_market_bars(
 
 @app.get("/api/v1/instruments/search")
 async def search_instruments(
-    q: str,
+    q: Optional[str] = "",
     type: Optional[str] = None,
     exchange: Optional[str] = None,
     currency: Optional[str] = None,
@@ -2185,7 +2448,7 @@ async def search_instruments(
     """Search for instruments by symbol or name.
     
     Args:
-        q: Search query (symbol or name, partial matches supported)
+        q: Search query (symbol or name, partial matches supported). If empty, returns popular instruments.
         type: Optional instrument type filter (STK, ETF, OPT, FUT, CASH, CRYPTO)
         exchange: Optional exchange filter (e.g., NASDAQ, NYSE, CME)
         currency: Optional currency filter (e.g., USD, EUR)
@@ -2199,9 +2462,9 @@ async def search_instruments(
         if limit < 1 or limit > 100:
             raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
         
-        # Validate query
+        # If query is empty, use wildcard to get popular instruments
         if not q or not q.strip():
-            raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
+            q = "*"  # Wildcard for popular instruments
         
         candidates = broker.search_instruments(
             query=q,
@@ -2218,7 +2481,7 @@ async def search_instruments(
         # Emit audit event
         if audit_store:
             audit_store.append_event(AuditEventCreate(
-                event_type=EventType.CUSTOM,
+                event_type=EventType.MARKET_SNAPSHOT_TAKEN,
                 correlation_id=get_correlation_id(),
                 data={
                     "endpoint": "search_instruments",
@@ -2312,7 +2575,7 @@ async def resolve_instrument(
             # Emit audit event
             if audit_store:
                 audit_store.append_event(AuditEventCreate(
-                    event_type=EventType.CUSTOM,
+                    event_type=EventType.MARKET_SNAPSHOT_TAKEN,
                     correlation_id=get_correlation_id(),
                     data={
                         "endpoint": "resolve_instrument",
@@ -2359,7 +2622,7 @@ async def resolve_instrument(
             # Emit audit event
             if audit_store:
                 audit_store.append_event(AuditEventCreate(
-                    event_type=EventType.CUSTOM,
+                    event_type=EventType.MARKET_SNAPSHOT_TAKEN,
                     correlation_id=get_correlation_id(),
                     data={
                         "endpoint": "resolve_instrument",
